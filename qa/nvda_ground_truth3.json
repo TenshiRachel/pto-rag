@@ -21,7 +21,7 @@
       { "report": "FY25Q3_QuarterlyPresentation", "year": "2025", "page": 6, "section": "Q3 FY25 Financial Summary" },
       { "report": "FY25Q4_QuarterlyPresentation", "year": "2025", "page": 6, "section": "Q4 FY25 Financial Summary" },
       { "report": "FY26Q1_QuarterlyPresentation", "year": "2026", "page": 6, "section": "Q1 FY26 Financial Summary" },
-      { "report": "FY26Q2_QuarterlyPresentation", "year": "2026", "page": 1, "section": "Q2 FY26 Financial Summary" }
+      { "report": "FY26Q2_QuarterlyPresentation", "year": "2026", "page": 6, "section": "Q2 FY26 Financial Summary" }
     ],
     "expected_tools": ["DataRetrieval", "TableExtractor"],
     "expected_tools_count": 2
