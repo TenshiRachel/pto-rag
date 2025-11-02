@@ -52,8 +52,8 @@
         }
       ],
       "num_llm_calls": 2,
-      "cache_hits": 0,
-      "cache_misses": 1
+      "cache_hits": 1,
+      "cache_misses": 0
     },
     "first_retrieve_cached": false,
     "warm_cache_retrieval_time_ms": 599.7822284698486,
@@ -117,8 +117,8 @@
         }
       ],
       "num_llm_calls": 3,
-      "cache_hits": 0,
-      "cache_misses": 1
+      "cache_hits": 1,
+      "cache_misses": 0
     },
     "first_retrieve_cached": false,
     "warm_cache_retrieval_time_ms": 451.2312412261963,
@@ -182,8 +182,8 @@
         }
       ],
       "num_llm_calls": 3,
-      "cache_hits": 0,
-      "cache_misses": 1
+      "cache_hits": 1,
+      "cache_misses": 0
     },
     "first_retrieve_cached": false,
     "warm_cache_retrieval_time_ms": 574.6273994445801,
