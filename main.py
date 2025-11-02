@@ -129,6 +129,40 @@ def run_benchmark(output_json_path: str, use_cache: bool):
             t1 = time.time()
             warm_cache_latency = (t1 - t0) * 1000.0  # ms
 
+        # --- ground truth relevant citations for this question ---
+        gt_entry = gt_items[idx - 1]  # same index we used to build benchmark_questions
+        gt_citations = gt_entry.get("citations", [])
+        # normalize ground truth as set of (report, page) tuples
+        gt_set = set(
+            (c.get("report"), c.get("page"))
+            for c in gt_citations
+            if c.get("report") is not None and c.get("page") is not None
+        )
+
+        # --- retrieved docs for this question (report, page) from retriever ---
+        retrieved_pairs = list(getattr(retr_tool, "last_pairs", []))
+        retrieved_set = set(
+            (r[0], r[1])
+            for r in retrieved_pairs
+            if r[0] is not None and r[1] is not None
+        )
+
+        # K actually used
+        k_used = getattr(retr_tool, "last_k_used", None)
+
+        # compute precision@K and recall@K
+        # precision = |retrieved ∩ gt| / |retrieved|
+        # recall    = |retrieved ∩ gt| / |gt|
+        intersection = gt_set.intersection(retrieved_set)
+        if len(retrieved_set) > 0:
+            precision_at_k = len(intersection) / len(retrieved_set)
+        else:
+            precision_at_k = 0.0
+        if len(gt_set) > 0:
+            recall_at_k = len(intersection) / len(gt_set)
+        else:
+            recall_at_k = 0.0
+
         # profiler artifacts
         profile_base = f"{'opt' if use_cache else 'base'}_Agent_q{idx}"
         profile_session_path = profile_base + ".txt"
@@ -152,6 +186,12 @@ def run_benchmark(output_json_path: str, use_cache: bool):
             "raw_response": raw_response,
             "data": parsed_json if parsed_json else None,
             "prose": prose,
+
+            # retrieval diagnostics
+            "retrieved_pairs": retrieved_pairs,
+            "k_used": k_used,
+            "precision_at_k": precision_at_k,
+            "recall_at_k": recall_at_k,
 
             # timing
             "elapsed_time": agent_end - agent_start,
