@@ -50,128 +50,171 @@ def create_system_message(question):
     """
 
 
-def create_agent(faiss_store):
-    # Create Tools
-    retriever_tool = RetrieverTool(faiss_store=faiss_store, top_k=12).as_tool()
-    comparison_tool = ComparisonTool().as_tool()
-    calculator_tool = CalculatorTool().as_tool()
-
-    # Initialize OpenAI LLM
+def create_agent(faiss_store, retr_tool, comp_tool, calc_tool):
     openai_llm = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
 
-    # Create OpenAI-compatible agent that can use tools
     agent = initialize_agent(
-        tools=[retriever_tool, comparison_tool, calculator_tool],
+        tools=[
+            retr_tool.as_tool(),
+            comp_tool.as_tool(),
+            calc_tool.as_tool()
+        ],
         llm=openai_llm,
-        agent_type=AgentType.OPENAI_FUNCTIONS,  # enables OpenAI’s function/tool calling
+        agent_type=AgentType.OPENAI_FUNCTIONS,
         verbose=True,
         handle_parsing_errors=True
     )
     return agent
 
 
-if __name__ == '__main__':
+def run_benchmark(output_json_path: str, use_cache: bool):
     load_dotenv()
 
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-
+    # 1. ingestion / chunking timing
+    ingest_start = time.time()
     all_docs = process_all()
-    chunked_docs = chunk_documents(all_docs, MAX_CHUNK_SIZE, CHUNK_OVERLAP)
+    chunked_docs = chunk_documents(all_docs, chunk_size=800, chunk_overlap=100)
+    ingest_end = time.time()
+    ingest_time_s = ingest_end - ingest_start
 
-    print(f"Chunked into {len(chunked_docs)} total segments.")
-    print(f"Parsed and chunked {len(all_docs)} total text segments.")
+    # 2. build FAISS + embeddings timing
+    embed_start = time.time()
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    faiss_store = build_faiss_index(chunked_docs, embeddings)
+    embed_end = time.time()
+    index_build_time_s = embed_end - embed_start
 
-    EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small") # Can be 'text-embedding-3-large'
-    faiss_store = build_faiss_index(chunked_docs, EMBEDDING_MODEL)
+    # load 3 benchmark queries
+    with open("qa/nvda_ground_truth3.json", "r") as f:
+        gt_items = json.load(f)
+    benchmark_questions = [item["query"] for item in gt_items[:3]]
 
-    # Load the questions from JSON file
-    with open('qa/nvda_ground_truth3.json', 'r') as f:
-        test_questions = json.load(f)
-
-    # Extract just the queries
-    queries = [item['query'] for item in test_questions]
+    # shared retrieval cache across questions if optimized
+    retrieval_cache = {} if use_cache else None
 
     all_results = []
-    # system_prompt = create_system_message()
+    overall_start = time.time()
 
-    for i, question in enumerate(queries, 1):
-        print(f"\n{'='*60}")
-        print(f"Question {i}: {question}")
-        print('='*60)
+    for idx, q in enumerate(benchmark_questions, start=1):
+        profiler = Profiler()
+        profiler.start()
 
-        # Create NEW profiler for each question
-        prof = Profiler(async_mode="disabled")
         timing_callback = TimingCallback()
+        timing_callback.start_total_timer()
 
-        start = time.perf_counter()
-        prof.start()
+        # set up tools
+        retr_tool = RetrieverTool(faiss_store, k=12, cache=retrieval_cache)
+        comp_tool = ComparisonTool()
+        calc_tool = CalculatorTool()
+        agent = create_agent(faiss_store, retr_tool, comp_tool, calc_tool)
 
-        prompt = create_system_message(question)
-
-        # Load FAISS Vector Store
-        # faiss_store = FAISS.load_local(
-        #     "faiss_index",
-        #     embeddings=embedding_model,
-        #     allow_dangerous_deserialization=True
-        # )
-
-        agent = create_agent(faiss_store)
-
+        # ask one question
+        prompt = create_system_message(q)
+        agent_start = time.time()
         response = agent.invoke(prompt, config={"callbacks": [timing_callback]})
-        timing_callback.finalize()
+        agent_end = time.time()
 
-        prof.stop()
-        elapsed = time.perf_counter() - start
+        timing_callback.end_total_timer()
+        profiler.stop()
 
-        # Save individual profile files
-        profile_session_path = f"03_Agent_q{i}.pyisession"
-        profile_html_path = f"03_Agent_q{i}.html"
+        # mark whether FIRST retrieval was served from cache
+        first_hit = getattr(retr_tool, "last_hit", False)
+        timing_callback.register_cache_hit(first_hit)
 
-        # Save individual profile
-        print(f"\n--- Profile for Question {i} ---")
-        print(prof.output_text(unicode=True, color=True))
-        prof.last_session.save(profile_session_path)
+        # measure "warm cache" speed separately WITHOUT affecting agent timing
+        warm_cache_latency = None
+        if use_cache:
+            t0 = time.time()
+            _ = retr_tool.forward(q)  # same query string again
+            t1 = time.time()
+            warm_cache_latency = (t1 - t0) * 1000.0  # ms
 
-        with open(profile_html_path, "w", encoding="utf-8") as f:
-            f.write(prof.output_html())
+        # profiler artifacts
+        profile_base = f"{'opt' if use_cache else 'base'}_Agent_q{idx}"
+        profile_session_path = profile_base + ".txt"
+        profile_html_path = profile_base + ".html"
 
-        # Extract results
-        data, prose = extract_json_and_prose(response['output'])
+        with open(profile_session_path, "w", encoding="utf-8") as f_txt:
+            f_txt.write(profiler.output_text(unicode=True, color=False))
 
-        # Store result
-        result = {
-            "question_number": i,
-            "question": question,
-            "raw_response": f"{response}",
-            "raw_output": response['output'],
-            "data": data,
+        with open(profile_html_path, "w", encoding="utf-8") as f_html:
+            f_html.write(profiler.output_html())
+
+        # extract structured JSON + prose
+        raw_response = str(response)
+        parsed_json, prose = extract_json_and_prose(raw_response)
+
+        per_question_record = {
+            "record_type": "question_result",
+            "run_type": "optimized" if use_cache else "baseline",
+            "question_number": idx,
+            "question": q,
+            "raw_response": raw_response,
+            "data": parsed_json if parsed_json else None,
             "prose": prose,
-            "elapsed_time": elapsed,
+
+            # timing
+            "elapsed_time": agent_end - agent_start,
             "callback_timing": timing_callback.get_summary(),
+            "first_retrieve_cached": first_hit,
+            "warm_cache_retrieval_time_ms": warm_cache_latency,
+
+            # system-level (repeated for convenience)
+            "ingest_time_s": ingest_time_s,
+            "index_build_time_s": index_build_time_s,
+
+            # profiler paths
             "profile_session_path": profile_session_path,
-            "profile_html_path": profile_html_path
+            "profile_html_path": profile_html_path,
         }
-        all_results.append(result)
+        all_results.append(per_question_record)
 
-        # Print summary
-        print(f"\n--- Profile for Question {i} ---")
-        print(prof.output_text(unicode=True, color=True))
-        print(f"\nResponse: {response}")
-        print(f"Elapsed time: {elapsed:.2f}s")
+        # write partial progress
+        with open(output_json_path, "w") as wf:
+            json.dump(all_results, wf, indent=2)
 
-        # Save all results to a single JSON file
-        results_filename = f"agent_results.json"
+    overall_end = time.time()
+    total_runtime_s = overall_end - overall_start
+    avg_per_q_s = total_runtime_s / len(benchmark_questions)
 
-        with open(results_filename, 'w', encoding='utf-8') as f:
-            json.dump(all_results, f, indent=2, ensure_ascii=False)
+    print(f"[{('optimized' if use_cache else 'baseline')}] Total runtime: {total_runtime_s:.2f} s")
+    print(f"[{('optimized' if use_cache else 'baseline')}] Avg per question: {avg_per_q_s:.2f} s")
 
-        print(f"\n{'='*60}")
-        print(f"All results saved to: {results_filename}")
-        print(f"{'='*60}")
+    # meta summary (1 row)
+    run_meta = {
+        "record_type": "run_meta",
+        "run_type": "optimized" if use_cache else "baseline",
+        "summary_total_runtime_s": total_runtime_s,
+        "summary_avg_per_question_s": avg_per_q_s,
+        "summary_questions": len(benchmark_questions),
+        "summary_qps": len(benchmark_questions) / total_runtime_s,
+        "ingest_time_s": ingest_time_s,
+        "index_build_time_s": index_build_time_s,
+    }
 
-    # Print summary statistics
-    total_time = sum(r['elapsed_time'] for r in all_results)
-    avg_time = total_time / len(all_results)
-    print(f"\nTotal questions: {len(all_results)}")
-    print(f"Total time: {total_time:.2f}s")
-    print(f"Average time per question: {avg_time:.2f}s")
+    # final JSON we save:
+    final_payload = [run_meta] + all_results
+    with open(output_json_path, "w") as wf:
+        json.dump(final_payload, wf, indent=2)
+
+    return final_payload
+
+
+# ---- CLI entrypoint so you can call this from PowerShell ----
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Path to write JSON results (e.g. agent_results_baseline.json)"
+    )
+    parser.add_argument(
+        "--use_cache",
+        action="store_true",
+        help="Enable retrieval caching optimization"
+    )
+    args = parser.parse_args()
+
+    run_benchmark(args.output, use_cache=args.use_cache)
