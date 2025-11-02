@@ -44,6 +44,7 @@ def create_system_message(question):
         - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.
         - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.
         - Always include every period in `computed_values`, even if the change value is null.
+        - When calling the retriever tool, choose and pass an appropriate k (3–15).
 
         Now, handle this query:
         {question}
@@ -102,8 +103,16 @@ def run_benchmark(output_json_path: str, use_cache: bool):
         timing_callback = TimingCallback()
         timing_callback.start_total_timer()
 
-        # set up tools
-        retr_tool = RetrieverTool(faiss_store, k=12, cache=retrieval_cache)
+        # decide if this run is optimized (caching + dynamic k) or baseline
+        is_optimized = use_cache  # same meaning in your CLI
+
+        retr_tool = RetrieverTool(
+            faiss_store=faiss_store,
+            default_k=12,
+            cache=retrieval_cache if is_optimized else None,
+            use_dynamic_k=is_optimized,  # turn on dynamic k only in optimized
+        )
+
         comp_tool = ComparisonTool()
         calc_tool = CalculatorTool()
         agent = create_agent(faiss_store, retr_tool, comp_tool, calc_tool)
@@ -131,7 +140,7 @@ def run_benchmark(output_json_path: str, use_cache: bool):
 
         # --- ground truth relevant citations for this question ---
         gt_entry = gt_items[idx - 1]  # same index we used to build benchmark_questions
-        gt_citations = gt_entry.get("citations", [])
+        gt_citations = gt_entry.get("expected_citations", [])
         # normalize ground truth as set of (report, page) tuples
         gt_set = set(
             (c.get("report"), c.get("page"))
