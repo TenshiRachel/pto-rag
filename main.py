@@ -4,7 +4,8 @@ import os
 from pyinstrument import Profiler
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain.agents import initialize_agent, AgentType
+from langchain.agents import initialize_agent, AgentType, AgentExecutor, create_openai_tools_agent
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder, SystemMessagePromptTemplate
 # from langchain_community.vectorstores import FAISS
 from pdf_ingestion_chunking import process_all, chunk_documents
 from build_indices import build_faiss_index
@@ -14,7 +15,8 @@ from agent_tools.retriever import RetrieverTool
 from utilities.extract_json import extract_json_and_prose
 from utilities.timing import TimingCallback
 from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
-
+import pandas as pd
+import re
 
 MAX_CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
@@ -22,8 +24,6 @@ CHUNK_OVERLAP = 100
 
 def create_system_message(question):
     return f"""
-        You are a financial analyst agent that can use tools.
-
         Use the retriever tool when you need to fetch financial data. You can only call this tool ONCE.
         Use the comparison tool when you need to compute YoY or QoQ comparisons.
         Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex ÷ Operating Income, Gross Margin %, Net Margin).
@@ -50,38 +50,101 @@ def create_system_message(question):
         {question}
     """
 
+def build_eval_prompt(agent_output, question, ground_truth=""):
+    return f"""
+    You are an expert financial analyst evaluating a generated agent response.
+
+    Please assess the following aspects of the agent output, and respond strictly in JSON format:
+    {{
+      "accuracy_score": integer,
+      "format_score": integer,
+      "tool_use_score": integer,
+      "citation_score": integer,
+      "final_score": integer,
+      "comments": "Brief explanation and key issues or strengths"
+    }}
+
+    Agent Response:
+    {agent_output}
+
+    Question:
+    {question}
+
+    (If applicable) Ground Truth:
+    {ground_truth}
+
+    Evaluate honestly and critically.
+    """
 
 def create_agent(faiss_store):
     # Create Tools
     retriever_tool = RetrieverTool(faiss_store=faiss_store, top_k=12).as_tool()
     comparison_tool = ComparisonTool().as_tool()
     calculator_tool = CalculatorTool().as_tool()
+    tools = [retriever_tool, comparison_tool, calculator_tool]
 
     # Initialize OpenAI LLM
-    openai_llm = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
 
-    # To keep context small
-    memory = ConversationSummaryMemory(
-        llm=openai_llm,
-        memory_key="chat_history", 
-        return_messages=True)
+    # ChatPromptTemplate for chat history and user input
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(
+            "You are a financial analysis assistant capable of using tools to answer complex financial questions."
+        ),
+        MessagesPlaceholder(variable_name="chat_history"),  # Memory slot
+        SystemMessagePromptTemplate.from_template(
+            "{input}"  # To pass in query
+        ),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ])
 
-    # To keep full context
-    # memory = ConversationBufferMemory(
-    #     llm=openai_llm,
-    #     memory_key="chat_history", 
-    #     return_messages=True)
-
-    # Create OpenAI-compatible agent that can use tools
-    agent = initialize_agent(
-        tools=[retriever_tool, comparison_tool, calculator_tool],
-        llm=openai_llm,
-        memory=memory,
-        agent_type=AgentType.OPENAI_FUNCTIONS,  # enables OpenAI’s function/tool calling
-        verbose=True,
-        handle_parsing_errors=True
+    # Create the agent using OpenAI Tools
+    agent = create_openai_tools_agent(
+        llm=llm,
+        tools=tools,
+        prompt=prompt
     )
-    return agent
+
+    # Memory settings
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True,
+    )
+
+    # Wrap in AgentExecutor
+    agent_executor = AgentExecutor.from_agent_and_tools(
+        agent=agent,
+        tools=tools,
+        memory=memory,
+        verbose=True,
+        handle_parsing_errors=True,
+        max_iterations=3, # 3 for now
+    )
+
+    return agent_executor
+
+def strip_json_fences(text):
+    """Remove markdown-style code fences like ```json ... ```"""
+    return re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL)
+
+def evaluate_agent_output(agent_output, question, ground_truth=""):
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    
+    eval_prompt = build_eval_prompt(
+        agent_output=agent_output,
+        question=question,
+        ground_truth=ground_truth
+    )
+
+    eval_response = llm.invoke(eval_prompt)
+
+    raw_text = eval_response.content
+    clean_text = strip_json_fences(raw_text)
+
+    try:
+        return json.loads(clean_text)
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON returned by judge", "raw": raw_text}
 
 
 if __name__ == '__main__':
@@ -109,7 +172,7 @@ if __name__ == '__main__':
     # system_prompt = create_system_message()
 
     # Agent created outside the loop instead of inside or else it will create new agent every iteration
-    agent = create_agent(faiss_store)
+    agent_executor = create_agent(faiss_store)
 
     for i, question in enumerate(queries, 1):
         print(f"\n{'='*60}")
@@ -132,7 +195,10 @@ if __name__ == '__main__':
         #     allow_dangerous_deserialization=True
         # )
 
-        response = agent.invoke(prompt, config={"callbacks": [timing_callback]})
+        response = agent_executor.invoke(
+            {"input": create_system_message(question)},
+            config={"callbacks": [timing_callback]}
+        )
         timing_callback.finalize()
 
         prof.stop()
@@ -151,14 +217,16 @@ if __name__ == '__main__':
             f.write(prof.output_html())
 
         # Extract results
-        data, prose = extract_json_and_prose(response['output'])
+        # data, prose = extract_json_and_prose(response['output'])
+        output_text = response.get("output", "")
+        data, prose = extract_json_and_prose(output_text)
 
         # Store result
         result = {
             "question_number": i,
             "question": question,
             "raw_response": f"{response}",
-            "raw_output": response['output'],
+            "raw_output": output_text,
             "data": data,
             "prose": prose,
             "elapsed_time": elapsed,
@@ -167,6 +235,10 @@ if __name__ == '__main__':
             "profile_html_path": profile_html_path
         }
         all_results.append(result)
+
+        raw_output = result['raw_output']
+        eval_result = evaluate_agent_output(raw_output, question)
+        result["evaluation"] = eval_result
 
         # Print summary
         print(f"\n--- Profile for Question {i} ---")
@@ -184,7 +256,10 @@ if __name__ == '__main__':
         print(f"All results saved to: {results_filename}")
         print(f"{'='*60}")
 
-        agent.memory.clear()  
+        agent_executor.memory.clear()  
+
+    with open("agent_results_with_eval.json", "w") as f:
+        json.dump(all_results, f, indent=2)
 
     # Print summary statistics
     total_time = sum(r['elapsed_time'] for r in all_results)
@@ -192,3 +267,6 @@ if __name__ == '__main__':
     print(f"\nTotal questions: {len(all_results)}")
     print(f"Total time: {total_time:.2f}s")
     print(f"Average time per question: {avg_time:.2f}s")
+
+    df = pd.read_json("agent_results_with_eval.json")
+    df["final_score"] = df["evaluation"].apply(lambda x: x.get("final_score", None))
