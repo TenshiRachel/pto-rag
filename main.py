@@ -13,6 +13,7 @@ from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
 from utilities.extract_json import extract_json_and_prose
 from utilities.timing import TimingCallback
+from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
 
 
 MAX_CHUNK_SIZE = 800
@@ -59,10 +60,23 @@ def create_agent(faiss_store):
     # Initialize OpenAI LLM
     openai_llm = ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
 
+    # To keep context small
+    memory = ConversationSummaryMemory(
+        llm=openai_llm,
+        memory_key="chat_history", 
+        return_messages=True)
+
+    # To keep full context
+    # memory = ConversationBufferMemory(
+    #     llm=openai_llm,
+    #     memory_key="chat_history", 
+    #     return_messages=True)
+
     # Create OpenAI-compatible agent that can use tools
     agent = initialize_agent(
         tools=[retriever_tool, comparison_tool, calculator_tool],
         llm=openai_llm,
+        memory=memory,
         agent_type=AgentType.OPENAI_FUNCTIONS,  # enables OpenAI’s function/tool calling
         verbose=True,
         handle_parsing_errors=True
@@ -94,6 +108,9 @@ if __name__ == '__main__':
     all_results = []
     # system_prompt = create_system_message()
 
+    # Agent created outside the loop instead of inside or else it will create new agent every iteration
+    agent = create_agent(faiss_store)
+
     for i, question in enumerate(queries, 1):
         print(f"\n{'='*60}")
         print(f"Question {i}: {question}")
@@ -114,8 +131,6 @@ if __name__ == '__main__':
         #     embeddings=embedding_model,
         #     allow_dangerous_deserialization=True
         # )
-
-        agent = create_agent(faiss_store)
 
         response = agent.invoke(prompt, config={"callbacks": [timing_callback]})
         timing_callback.finalize()
@@ -168,6 +183,8 @@ if __name__ == '__main__':
         print(f"\n{'='*60}")
         print(f"All results saved to: {results_filename}")
         print(f"{'='*60}")
+
+        agent.memory.clear()  
 
     # Print summary statistics
     total_time = sum(r['elapsed_time'] for r in all_results)
