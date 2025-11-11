@@ -21,6 +21,21 @@ import re
 MAX_CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
+def get_nvidia_fiscal_year(today=None):
+    """
+    Returns NVIDIA's current fiscal year label (e.g., 'FY26').
+    NVIDIA's fiscal year ends in January.
+    """
+    import datetime
+    if today is None:
+        today = datetime.date.today()
+
+    fiscal_year_end_month = 1  # January
+    year = today.year
+    if today.month > fiscal_year_end_month:
+        year += 1
+
+    return f"FY{str(year)[-2:]}"
 
 def create_system_message(question):
     return f"""
@@ -51,6 +66,10 @@ def create_system_message(question):
     """
 
 def build_eval_prompt(agent_output, question, ground_truth=""):
+    from datetime import date
+    current_fy = get_nvidia_fiscal_year(today=date.today())
+    latest_complete_fy = f"FY{int(current_fy[-2:]) - 1}"
+
     return f"""
     You are an expert financial analyst evaluating a generated agent response.
 
@@ -64,6 +83,24 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
       "comments": "Brief explanation and key issues or strengths"
     }}
 
+    ### Evaluation Criteria
+
+    - **Accuracy:**  
+      Check that financial values, calculations, and time periods align with the most recent available data.  
+      The fiscal year ends in January; current FY = {current_fy}, latest complete FY = {latest_complete_fy}.  
+      Penalize outdated or incomplete data but do not mention missing years explicitly.
+
+    - **Format:**  
+      Is the structure clear, complete, and compliant with the expected JSON + prose format?
+
+    - **Tool Use:**  
+      Were the correct tools (retriever, calculator, comparison) used logically and efficiently?
+
+    - **Citations:**  
+      Are citations present, relevant, and tied to the reported figures?
+
+    Respond **only in valid JSON** — no markdown, text, or code fences.
+
     Agent Response:
     {agent_output}
 
@@ -73,6 +110,7 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
     (If applicable) Ground Truth:
     {ground_truth}
 
+    Please write a step-by-step explanation of your score before presenting the final JSON.
     Evaluate honestly and critically.
     """
 
@@ -118,7 +156,7 @@ def create_agent(faiss_store):
         memory=memory,
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=3, # 3 for now
+        max_iterations=6, # 6 for now
     )
 
     return agent_executor

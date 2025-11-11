@@ -5,7 +5,7 @@ from langchain.tools import StructuredTool
 
 FINANCIAL_FORMULAS = {
     "operating_efficiency_ratio": {
-        "formula": "opex / operating_income",
+        "formula": "operating_expenses / operating_income",
         "description": "Measures how much operating expense is spent per unit of operating income."
     },
     "gross_margin": {
