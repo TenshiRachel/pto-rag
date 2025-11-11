@@ -1,25 +1,23 @@
 import time
 import json
 import os
+import asyncio
 from pyinstrument import Profiler
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.agents import initialize_agent, AgentType, AgentExecutor, create_openai_tools_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder, SystemMessagePromptTemplate
 # from langchain_community.vectorstores import FAISS
-from pdf_ingestion_chunking import process_all, chunk_documents
+from pdf_ingestion_chunking import process_all_async, ChunkingEvaluator, SmartFinancialChunker
 from build_indices import build_faiss_index
 from agent_tools.calculator import CalculatorTool
 from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
-from utilities.extract_json import extract_json_and_prose
+from utilities.json import extract_json_and_prose, strip_json_fences
 from utilities.timing import TimingCallback
 from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
 import pandas as pd
-import re
 
-MAX_CHUNK_SIZE = 800
-CHUNK_OVERLAP = 100
 
 def get_nvidia_fiscal_year(today=None):
     """
@@ -36,6 +34,7 @@ def get_nvidia_fiscal_year(today=None):
         year += 1
 
     return f"FY{str(year)[-2:]}"
+
 
 def create_system_message(question):
     return f"""
@@ -64,6 +63,7 @@ def create_system_message(question):
         Now, handle this query:
         {question}
     """
+
 
 def build_eval_prompt(agent_output, question, ground_truth=""):
     from datetime import date
@@ -114,6 +114,7 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
     Evaluate honestly and critically.
     """
 
+
 def create_agent(faiss_store):
     # Create Tools
     retriever_tool = RetrieverTool(faiss_store=faiss_store, top_k=12).as_tool()
@@ -156,18 +157,15 @@ def create_agent(faiss_store):
         memory=memory,
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=6, # 6 for now
+        max_iterations=6,  # 6 for now
     )
 
     return agent_executor
 
-def strip_json_fences(text):
-    """Remove markdown-style code fences like ```json ... ```"""
-    return re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.DOTALL)
 
 def evaluate_agent_output(agent_output, question, ground_truth=""):
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    
+
     eval_prompt = build_eval_prompt(
         agent_output=agent_output,
         question=question,
@@ -190,13 +188,39 @@ if __name__ == '__main__':
 
     openai_api_key = os.getenv("OPENAI_API_KEY")
 
-    all_docs = process_all()
-    chunked_docs = chunk_documents(all_docs, MAX_CHUNK_SIZE, CHUNK_OVERLAP)
+    all_docs = asyncio.run(process_all_async('data/'))
+    chunking_evaluator = ChunkingEvaluator(all_docs)
+
+    results = chunking_evaluator.evaluate_chunking_strategy(
+        chunk_sizes=[700, 800, 900, 1000],
+        chunk_overlaps=[100, 200, 300]
+    )
+
+    print("\n--- Evaluation Results ---")
+    for r in results:
+        print(f"\nConfig: size={r['chunk_size']}, overlap={r['chunk_overlap']}")
+        print(f"  Chunks: {r['num_chunks']}")
+        print(f"  Avg Length: {r['avg_chunk_length']:.0f} ± {r['std_chunk_length']:.0f}")
+        print(f"  Context Preservation: {r['context_preservation']:.2%}")
+        print(f"  Section Coherence: {r['section_coherence']:.2%}")
+        print(f"  Boundary Quality: {r['boundary_quality']:.2%}")
+
+    # Find optimal configuration
+    optimal_chunk_config = chunking_evaluator.find_optimal_config(results)
+    print(f"\nOPTIMAL CONFIG: size={optimal_chunk_config['chunk_size']}, overlap={optimal_chunk_config['chunk_overlap']}")
+    print(f"  Composite Score: {optimal_chunk_config['composite_score']:.3f}")
+
+    chunker = SmartFinancialChunker(
+        chunk_size=optimal_chunk_config['chunk_size'],
+        chunk_overlap=optimal_chunk_config['chunk_overlap']
+    )
+
+    chunked_docs = chunker.chunk_documents(all_docs)
 
     print(f"Chunked into {len(chunked_docs)} total segments.")
     print(f"Parsed and chunked {len(all_docs)} total text segments.")
 
-    EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small") # Can be 'text-embedding-3-large'
+    EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small")  # Can be 'text-embedding-3-large'
     faiss_store = build_faiss_index(chunked_docs, EMBEDDING_MODEL)
 
     # Load the questions from JSON file
@@ -225,13 +249,6 @@ if __name__ == '__main__':
         prof.start()
 
         prompt = create_system_message(question)
-
-        # Load FAISS Vector Store
-        # faiss_store = FAISS.load_local(
-        #     "faiss_index",
-        #     embeddings=embedding_model,
-        #     allow_dangerous_deserialization=True
-        # )
 
         response = agent_executor.invoke(
             {"input": create_system_message(question)},
@@ -284,17 +301,7 @@ if __name__ == '__main__':
         print(f"\nResponse: {response}")
         print(f"Elapsed time: {elapsed:.2f}s")
 
-        # Save all results to a single JSON file
-        results_filename = f"agent_results.json"
-
-        with open(results_filename, 'w', encoding='utf-8') as f:
-            json.dump(all_results, f, indent=2, ensure_ascii=False)
-
-        print(f"\n{'='*60}")
-        print(f"All results saved to: {results_filename}")
-        print(f"{'='*60}")
-
-        agent_executor.memory.clear()  
+        agent_executor.memory.clear()
 
     with open("agent_results_with_eval.json", "w") as f:
         json.dump(all_results, f, indent=2)
