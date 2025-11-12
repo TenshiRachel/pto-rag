@@ -68,7 +68,7 @@ def create_agent(faiss_store, retr_tool, comp_tool, calc_tool):
     return agent
 
 
-def run_benchmark(output_json_path: str, use_cache: bool):
+def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
     load_dotenv()
 
     # 1. ingestion / chunking timing
@@ -109,8 +109,8 @@ def run_benchmark(output_json_path: str, use_cache: bool):
         retr_tool = RetrieverTool(
             faiss_store=faiss_store,
             default_k=12,
-            cache=retrieval_cache if is_optimized else None,
-            use_dynamic_k=is_optimized,  # turn on dynamic k only in optimized
+            cache=retrieval_cache,  # cache toggled only by use_cache
+            use_dynamic_k=use_dynamic_k,  # dynamic-K toggled separately
         )
 
         comp_tool = ComparisonTool()
@@ -259,11 +259,8 @@ if __name__ == "__main__":
         required=True,
         help="Path to write JSON results (e.g. agent_results_baseline.json)"
     )
-    parser.add_argument(
-        "--use_cache",
-        action="store_true",
-        help="Enable retrieval caching optimization"
-    )
+    parser.add_argument("--use_cache", action="store_true", help="Enable retrieval caching")
+    parser.add_argument("--use_dynamic_k", action="store_true", help="Enable dynamic-K retrieval")
     args = parser.parse_args()
 
-    run_benchmark(args.output, use_cache=args.use_cache)
+    run_benchmark(args.output, use_cache=args.use_cache, use_dynamic_k=args.use_dynamic_k)

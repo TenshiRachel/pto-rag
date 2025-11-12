@@ -17,10 +17,59 @@
     "raw_response": "{'input': '\\n        You are a financial analyst agent that can use tools.\\n\\n        Use the retriever tool when you need to fetch financial data. You can only call this tool ONCE.\\n        Use the comparison tool when you need to compute YoY or QoQ comparisons.\\n        Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex \u00f7 Operating Income, Gross Margin %, Net Margin).\\n\\n        Once done, return\\n        1. The **final structured JSON output** in this format:\\n        2. **Prose explanation**, converting the JSON output into a formatted table\\n\\n        {\\n        \"query\": \"...\",\\n        \"data_values\": [...],\\n        \"computed_values\": [...],\\n        \"citations\": [{\"report\": \"...\", \"page\": ..., \"section\": \"...\"}],\\n        \"tools\": [\"<list the tools you actually used>\"],\\n        \"tools_count\": <total number of tools used>\\n        }\\n\\n        Guidelines:\\n        - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.\\n        - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.\\n        - Always include every period in `computed_values`, even if the change value is null.\\n\\n        Now, handle this query:\\n        Report the Gross Margin (%) over the last 5 quarters, with values.\\n    ', 'output': '```json\\n{\\n  \"query\": \"Report the Gross Margin (%) over the last 5 quarters, with values.\",\\n  \"data_values\": [\\n    {\"quarter\": \"Q2 FY26\", \"gross_margin\": \"72.4%\", \"report\": \"FY26Q2_QuarterlyPresentation\", \"page\": 6},\\n    {\"quarter\": \"Q1 FY26\", \"gross_margin\": \"73.5%\", \"report\": \"FY26Q1_QuarterlyPresentation\", \"page\": 28},\\n    {\"quarter\": \"Q4 FY25\", \"gross_margin\": \"73.0%\", \"report\": \"FY25Q4_QuarterlyPresentation\", \"page\": 6},\\n    {\"quarter\": \"Q3 FY25\", \"gross_margin\": \"74.6%\", \"report\": \"FY25Q3_QuarterlyPresentation\", \"page\": 6},\\n    {\"quarter\": \"Q2 FY25\", \"gross_margin\": \"75.1%\", \"report\": \"FY25Q2_QuarterlyPresentation\", \"page\": 6}\\n  ],\\n  \"computed_values\": [\\n    {\"quarter\": \"Q2 FY26\", \"gross_margin\": \"72.4%\"},\\n    {\"quarter\": \"Q1 FY26\", \"gross_margin\": \"73.5%\"},\\n    {\"quarter\": \"Q4 FY25\", \"gross_margin\": \"73.0%\"},\\n    {\"quarter\": \"Q3 FY25\", \"gross_margin\": \"74.6%\"},\\n    {\"quarter\": \"Q2 FY25\", \"gross_margin\": \"75.1%\"}\\n  ],\\n  \"citations\": [\\n    {\"report\": \"FY26Q2_QuarterlyPresentation\", \"page\": 6, \"section\": \"Q2 FY26 Financial Summary\"},\\n    {\"report\": \"FY26Q1_QuarterlyPresentation\", \"page\": 28, \"section\": \"Reconciliation of Non-GAAP to GAAP Financial Measures (contd.)\"},\\n    {\"report\": \"FY25Q4_QuarterlyPresentation\", \"page\": 6, \"section\": \"Q4 FY25 Financial Summary\"},\\n    {\"report\": \"FY25Q3_QuarterlyPresentation\", \"page\": 6, \"section\": \"Q3 FY25 Financial Summary\"},\\n    {\"report\": \"FY25Q2_QuarterlyPresentation\", \"page\": 6, \"section\": \"Q2 FY25 Financial Summary\"}\\n  ],\\n  \"tools\": [\"retriever\"],\\n  \"tools_count\": 1\\n}\\n```\\n\\n**Prose Explanation:**\\n\\n| Quarter   | Gross Margin (%) | Report                          | Page |\\n|-----------|------------------|---------------------------------|------|\\n| Q2 FY26   | 72.4%            | FY26Q2_QuarterlyPresentation    | 6    |\\n| Q1 FY26   | 73.5%            | FY26Q1_QuarterlyPresentation    | 28   |\\n| Q4 FY25   | 73.0%            | FY25Q4_QuarterlyPresentation    | 6    |\\n| Q3 FY25   | 74.6%            | FY25Q3_QuarterlyPresentation    | 6    |\\n| Q2 FY25   | 75.1%            | FY25Q2_QuarterlyPresentation    | 6    |\\n\\nThe table above shows the Gross Margin (%) for the last five quarters, along with the corresponding reports and page numbers where this data can be found. The Gross Margin has shown a slight decline over these quarters, from 75.1% in Q2 FY25 to 72.4% in Q2 FY26.'}",
     "data": null,
     "prose": "",
-    "retrieved_pairs": [],
-    "k_used": null,
-    "precision_at_k": 0.0,
-    "recall_at_k": 0.0,
+    "retrieved_pairs": [
+      [
+        "FY25Q4_QuarterlyPresentation",
+        23
+      ],
+      [
+        "FY26Q1_QuarterlyPresentation",
+        28
+      ],
+      [
+        "FY26Q2_QuarterlyPresentation",
+        26
+      ],
+      [
+        "FY25Q3_QuarterlyPresentation",
+        22
+      ],
+      [
+        "FY25Q2_QuarterlyPresentation",
+        25
+      ],
+      [
+        "FY25Q1_10Q",
+        27
+      ],
+      [
+        "FY25Q4_QuarterlyPresentation",
+        6
+      ],
+      [
+        "FY25Q3_QuarterlyPresentation",
+        6
+      ],
+      [
+        "FY25Q2_QuarterlyPresentation",
+        6
+      ],
+      [
+        "FY25Q4_PR",
+        1
+      ],
+      [
+        "FY25Q2_10Q",
+        30
+      ],
+      [
+        "FY26Q2_QuarterlyPresentation",
+        6
+      ]
+    ],
+    "k_used": 12,
+    "precision_at_k": 0.3333333333333333,
+    "recall_at_k": 0.8,
     "elapsed_time": 19.55147624015808,
     "callback_timing": {
       "T_retrieve": 0.3699,
@@ -74,8 +123,57 @@
     "raw_response": "{'input': '\\n        You are a financial analyst agent that can use tools.\\n\\n        Use the retriever tool when you need to fetch financial data. You can only call this tool ONCE.\\n        Use the comparison tool when you need to compute YoY or QoQ comparisons.\\n        Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex \u00f7 Operating Income, Gross Margin %, Net Margin).\\n\\n        Once done, return\\n        1. The **final structured JSON output** in this format:\\n        2. **Prose explanation**, converting the JSON output into a formatted table\\n\\n        {\\n        \"query\": \"...\",\\n        \"data_values\": [...],\\n        \"computed_values\": [...],\\n        \"citations\": [{\"report\": \"...\", \"page\": ..., \"section\": \"...\"}],\\n        \"tools\": [\"<list the tools you actually used>\"],\\n        \"tools_count\": <total number of tools used>\\n        }\\n\\n        Guidelines:\\n        - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.\\n        - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.\\n        - Always include every period in `computed_values`, even if the change value is null.\\n\\n        Now, handle this query:\\n        Show Operating Expenses for the last 3 fiscal years, year-on-year comparison.\\n    ', 'output': '{\\n  \"query\": \"Show Operating Expenses for the last 3 fiscal years, year-on-year comparison.\",\\n  \"data_values\": [\\n    {\"year\": \"2022\", \"operating_expenses\": 7434, \"units\": \"millions USD\"},\\n    {\"year\": \"2023\", \"operating_expenses\": 11132, \"units\": \"millions USD\"},\\n    {\"year\": \"2024\", \"operating_expenses\": 11329, \"units\": \"millions USD\"}\\n  ],\\n  \"computed_values\": [\\n    {\"year\": \"2022\", \"operating_expenses\": 7434, \"YoY_change (%)\": null, \"units\": \"millions USD\"},\\n    {\"year\": \"2023\", \"operating_expenses\": 11132, \"YoY_change (%)\": 49.74, \"units\": \"millions USD\"},\\n    {\"year\": \"2024\", \"operating_expenses\": 11329, \"YoY_change (%)\": 1.77, \"units\": \"millions USD\"}\\n  ],\\n  \"citations\": [\\n    {\"report\": \"FY23_10K\", \"page\": 43, \"section\": \"Item 1A. Risk\"},\\n    {\"report\": \"FY24_10K\", \"page\": 40, \"section\": \"Item 1A. Risk Factors\"},\\n    {\"report\": \"FY22_10K\", \"page\": 37, \"section\": \"Item 1A. Risk Factors\"}\\n  ],\\n  \"tools\": [\"retriever\", \"comparison_tool\"],\\n  \"tools_count\": 2\\n}\\n\\n**Prose Explanation:**\\n\\n| Year | Operating Expenses (millions USD) | YoY Change (%) |\\n|------|-----------------------------------|----------------|\\n| 2022 | 7,434                             | N/A            |\\n| 2023 | 11,132                            | 49.74%         |\\n| 2024 | 11,329                            | 1.77%          |\\n\\n- In 2022, the operating expenses were $7,434 million.\\n- In 2023, the operating expenses increased significantly to $11,132 million, marking a 49.74% increase from the previous year.\\n- In 2024, the operating expenses slightly increased to $11,329 million, representing a 1.77% increase from 2023.\\n\\nThe data was retrieved from the financial reports for fiscal years 2022, 2023, and 2024, and the year-on-year changes were calculated accordingly.'}",
     "data": null,
     "prose": "",
-    "retrieved_pairs": [],
-    "k_used": null,
+    "retrieved_pairs": [
+      [
+        "FY23_10K",
+        85
+      ],
+      [
+        "FY24_10K",
+        78
+      ],
+      [
+        "FY25Q2_10Q",
+        21
+      ],
+      [
+        "FY22_10K",
+        77
+      ],
+      [
+        "FY23_10K",
+        43
+      ],
+      [
+        "FY21_10K",
+        76
+      ],
+      [
+        "FY24Q3_10Q",
+        31
+      ],
+      [
+        "FY25_10K",
+        78
+      ],
+      [
+        "FY24Q2_10Q",
+        23
+      ],
+      [
+        "FY25Q1_10Q",
+        20
+      ],
+      [
+        "FY22_10K",
+        37
+      ],
+      [
+        "FY24Q1_10Q",
+        21
+      ]
+    ],
+    "k_used": 12,
     "precision_at_k": 0.0,
     "recall_at_k": 0.0,
     "elapsed_time": 10.0327787399292,
@@ -143,8 +241,53 @@
     "raw_response": "{'input': '\\n        You are a financial analyst agent that can use tools.\\n\\n        Use the retriever tool when you need to fetch financial data. You can only call this tool ONCE.\\n        Use the comparison tool when you need to compute YoY or QoQ comparisons.\\n        Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex \u00f7 Operating Income, Gross Margin %, Net Margin).\\n\\n        Once done, return\\n        1. The **final structured JSON output** in this format:\\n        2. **Prose explanation**, converting the JSON output into a formatted table\\n\\n        {\\n        \"query\": \"...\",\\n        \"data_values\": [...],\\n        \"computed_values\": [...],\\n        \"citations\": [{\"report\": \"...\", \"page\": ..., \"section\": \"...\"}],\\n        \"tools\": [\"<list the tools you actually used>\"],\\n        \"tools_count\": <total number of tools used>\\n        }\\n\\n        Guidelines:\\n        - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.\\n        - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.\\n        - Always include every period in `computed_values`, even if the change value is null.\\n\\n        Now, handle this query:\\n        Calculate the Operating Efficiency Ratio (Opex \u00f7 Operating Income) for the last 3 fiscal years, showing the working.\\n    ', 'output': '```json\\n{\\n  \"query\": \"Calculate the Operating Efficiency Ratio (Opex \u00f7 Operating Income) for the last 3 fiscal years, showing the working.\",\\n  \"data_values\": [\\n    {\"year\": \"2023\", \"opex\": 11132, \"operating_income\": 4224, \"unit\": \"millions\"},\\n    {\"year\": \"2022\", \"opex\": 7434, \"operating_income\": 10041, \"unit\": \"millions\"},\\n    {\"year\": \"2021\", \"opex\": 5536, \"operating_income\": 4532, \"unit\": \"millions\"}\\n  ],\\n  \"computed_values\": [\\n    {\\n      \"year\": \"2023\",\\n      \"computed_value\": 2.6354,\\n      \"formula_used\": \"opex / operating_income\",\\n      \"working\": \"11132 \u00f7 4224 = 2.6354\"\\n    },\\n    {\\n      \"year\": \"2022\",\\n      \"computed_value\": 0.7404,\\n      \"formula_used\": \"opex / operating_income\",\\n      \"working\": \"7434 \u00f7 10041 = 0.7404\"\\n    },\\n    {\\n      \"year\": \"2021\",\\n      \"computed_value\": 1.2215,\\n      \"formula_used\": \"opex / operating_income\",\\n      \"working\": \"5536 \u00f7 4532 = 1.2215\"\\n    }\\n  ],\\n  \"citations\": [\\n    {\"report\": \"FY23_10K\", \"page\": 43, \"section\": \"Item 1A. Risk\"},\\n    {\"report\": \"FY23_10K\", \"page\": 85, \"section\": \"NVIDIA CORPORATION AND SUBSIDIARIES\"}\\n  ],\\n  \"tools\": [\"retriever\", \"calculator_tool\"],\\n  \"tools_count\": 2\\n}\\n```\\n\\n**Prose Explanation:**\\n\\n| Year | Operating Expenses (millions) | Operating Income (millions) | Operating Efficiency Ratio (Opex \u00f7 Operating Income) | Working                  |\\n|------|-------------------------------|-----------------------------|------------------------------------------------------|--------------------------|\\n| 2023 | 11,132                        | 4,224                       | 2.6354                                               | 11,132 \u00f7 4,224 = 2.6354  |\\n| 2022 | 7,434                         | 10,041                      | 0.7404                                               | 7,434 \u00f7 10,041 = 0.7404  |\\n| 2021 | 5,536                         | 4,532                       | 1.2215                                               | 5,536 \u00f7 4,532 = 1.2215   |\\n\\nThe Operating Efficiency Ratio, calculated as Operating Expenses divided by Operating Income, shows how efficiently a company is managing its operating expenses relative to its operating income. A lower ratio indicates better efficiency. In 2023, the ratio increased significantly, indicating a decrease in efficiency compared to previous years.'}",
     "data": null,
     "prose": "",
-    "retrieved_pairs": [],
-    "k_used": null,
+    "retrieved_pairs": [
+      [
+        "FY24Q1_10Q",
+        27
+      ],
+      [
+        "FY24Q3_10Q",
+        27
+      ],
+      [
+        "FY25Q2_10Q",
+        28
+      ],
+      [
+        "FY24Q3_10Q",
+        3
+      ],
+      [
+        "FY24Q3_10Q",
+        32
+      ],
+      [
+        "FY23_10K",
+        85
+      ],
+      [
+        "FY24_10K",
+        78
+      ],
+      [
+        "FY24Q3_10Q",
+        23
+      ],
+      [
+        "FY25Q3_QuarterlyPresentation",
+        6
+      ],
+      [
+        "FY25Q2_10Q",
+        21
+      ],
+      [
+        "FY25Q1_10Q",
+        20
+      ]
+    ],
+    "k_used": 12,
     "precision_at_k": 0.0,
     "recall_at_k": 0.0,
     "elapsed_time": 13.499562978744507,
