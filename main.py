@@ -14,7 +14,6 @@ from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
 from utilities.extract_json import extract_json_and_prose
 from utilities.timing import TimingCallback
-from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
 import pandas as pd
 import re
 
@@ -129,7 +128,6 @@ def create_agent(faiss_store):
         SystemMessagePromptTemplate.from_template(
             "You are a financial analysis assistant capable of using tools to answer complex financial questions."
         ),
-        MessagesPlaceholder(variable_name="chat_history"),  # Memory slot
         SystemMessagePromptTemplate.from_template(
             "{input}"  # To pass in query
         ),
@@ -143,17 +141,10 @@ def create_agent(faiss_store):
         prompt=prompt
     )
 
-    # Memory settings
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        return_messages=True,
-    )
-
     # Wrap in AgentExecutor
     agent_executor = AgentExecutor.from_agent_and_tools(
         agent=agent,
         tools=tools,
-        memory=memory,
         verbose=True,
         handle_parsing_errors=True,
         max_iterations=6, # 6 for now
@@ -293,8 +284,6 @@ if __name__ == '__main__':
         print(f"\n{'='*60}")
         print(f"All results saved to: {results_filename}")
         print(f"{'='*60}")
-
-        agent_executor.memory.clear()  
 
     with open("agent_results_with_eval.json", "w") as f:
         json.dump(all_results, f, indent=2)
