@@ -1,0 +1,4 @@
+Question #,Answer Accuracy (%),Citation Accuracy (%),Citation Count,Expected Citation Count,Tool Count,T_gen,T_reason,T_retriever_tool,T_comparison_tool,T_calculator_tool,T_overhead,T_total,Prompt Tokens,Completion Tokens,Total Tokens,Total LLM Calls
+1,80,80,5,5,1,11.19,2.78,1.133,,,0.15,15.25,3633,858,4491,2
+2,50,0,3,1,2,6.43,7.25,0.395,0.0006,,0.1,14.17,8492,752,9244,3
+3,0,0,1,1,2,8.33,9,1.4509,,0.0008,0.08,18.85,7706,936,8642,3

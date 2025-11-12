@@ -260,8 +260,8 @@ if __name__ == '__main__':
         elapsed = time.perf_counter() - start
 
         # Save individual profile files
-        profile_session_path = f"03_Agent_q{i}.pyisession"
-        profile_html_path = f"03_Agent_q{i}.html"
+        profile_session_path = f"./results_log/03_Agent_q{i}.pyisession"
+        profile_html_path = f"./results_log/03_Agent_q{i}.html"
 
         # Save individual profile
         print(f"\n--- Profile for Question {i} ---")
