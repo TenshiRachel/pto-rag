@@ -23,7 +23,7 @@
       { "report": "FY26Q1_QuarterlyPresentation", "year": "2026", "page": 6, "section": "Q1 FY26 Financial Summary" },
       { "report": "FY26Q2_QuarterlyPresentation", "year": "2026", "page": 6, "section": "Q2 FY26 Financial Summary" }
     ],
-    "expected_tools": ["DataRetrieval", "TableExtractor"],
+    "expected_tools": ["functions.retriever", "functions.comparison_tool"],
     "expected_tools_count": 2
   },
   {
@@ -42,7 +42,7 @@
     "expected_citations": [
       { "report": "FY25_10K", "year": "2025", "page": 52, "section": "Consolidated Statements of Income" }
     ],
-    "expected_tools": ["DataRetrieval", "TableExtractor", "Calculator"],
+    "expected_tools": ["functions.retriever", "functions.comparison_tool"],
     "expected_tools_count": 3
   },
   {
@@ -61,7 +61,7 @@
     "expected_citations": [
       { "report": "FY25_10K", "year": "2025", "page": 52, "section": "Consolidated Statements of Income" }
     ],
-    "expected_tools": ["DataRetrieval", "TableExtractor", "Calculator"],
+    "expected_tools": ["functions.retriever", "functions.calculator_tool"],
     "expected_tools_count": 3
   }
 ]

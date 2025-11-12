@@ -18,28 +18,15 @@ from utilities.timing import TimingCallback
 import pandas as pd
 
 
-def get_nvidia_fiscal_year(today=None):
-    """
-    Returns NVIDIA's current fiscal year label (e.g., 'FY26').
-    NVIDIA's fiscal year ends in January.
-    """
-    import datetime
-    if today is None:
-        today = datetime.date.today()
-
-    fiscal_year_end_month = 1  # January
-    year = today.year
-    if today.month > fiscal_year_end_month:
-        year += 1
-
-    return f"FY{str(year)[-2:]}"
-
-
 def create_system_message(question):
     return f"""
-        Use the retriever tool when you need to fetch financial data. You can only call this tool ONCE.
+        You are a financial analyst agent that can use tools.
+
+        Use the retriever tool when you need to fetch financial data. 
         Use the comparison tool when you need to compute YoY or QoQ comparisons.
         Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex ÷ Operating Income, Gross Margin %, Net Margin).
+
+        You can only call any tools ONCE.
 
         Once done, return
         1. The **final structured JSON output** in this format:
@@ -65,40 +52,22 @@ def create_system_message(question):
 
 
 def build_eval_prompt(agent_output, question, ground_truth=""):
-    from datetime import date
-    current_fy = get_nvidia_fiscal_year(today=date.today())
-    latest_complete_fy = f"FY{int(current_fy[-2:]) - 1}"
-
     return f"""
-    You are an expert financial analyst evaluating a generated agent response.
+    You are an expert financial analyst evaluator.
+
+    The `ground_truth` provided below already contains the correct and most recent data, 
+    Do NOT attempt to infer, update, or verify it externally. 
+    Your task is only to compare the agent's output to the provided ground truth and grade based on consistency.
 
     Please assess the following aspects of the agent output, and respond strictly in JSON format:
     {{
-      "accuracy_score": integer,
-      "format_score": integer,
-      "tool_use_score": integer,
-      "citation_score": integer,
-      "final_score": integer,
-      "comments": "Brief explanation and key issues or strengths"
+      "accuracy_score": integer,  # Match between agent data/computed values and ground truth
+      "format_score": integer,    # JSON structure, completeness, and prose clarity
+      "tool_use_score": integer,  # Appropriateness and correctness of tool usage vs expected tools
+      "citation_score": integer,  # Whether citations correspond to expected ground truth reports
+      "final_score": integer,     # Overall combined score
+      "comments": "Brief explanation and key issues"
     }}
-
-    ### Evaluation Criteria
-
-    - **Accuracy:**  
-      Check that financial values, calculations, and time periods align with the most recent available data.  
-      The fiscal year ends in January; current FY = {current_fy}, latest complete FY = {latest_complete_fy}.  
-      Penalize outdated or incomplete data but do not mention missing years explicitly.
-
-    - **Format:**  
-      Is the structure clear, complete, and compliant with the expected JSON + prose format?
-
-    - **Tool Use:**  
-      Were the correct tools (retriever, calculator, comparison) used logically and efficiently?
-
-    - **Citations:**  
-      Are citations present, relevant, and tied to the reported figures?
-
-    Respond **only in valid JSON** — no markdown, text, or code fences.
 
     Agent Response:
     {agent_output}
@@ -106,11 +75,11 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
     Question:
     {question}
 
-    (If applicable) Ground Truth:
+    Ground Truth:
     {ground_truth}
 
-    Please write a step-by-step explanation of your score before presenting the final JSON.
-    Evaluate honestly and critically.
+    Only evaluate **relative to this ground truth**. 
+    Provide a short reasoning and then output a valid JSON block.
     """
 
 
@@ -221,6 +190,9 @@ if __name__ == '__main__':
     # Extract just the queries
     queries = [item['query'] for item in test_questions]
 
+    # Extract the ground truth
+    ground_truth_map = {item['query']: item for item in test_questions}
+
     all_results = []
     # system_prompt = create_system_message()
 
@@ -283,7 +255,19 @@ if __name__ == '__main__':
         all_results.append(result)
 
         raw_output = result['raw_output']
-        eval_result = evaluate_agent_output(raw_output, question)
+        ground_truth_entry = ground_truth_map.get(question, {})
+
+        # Pass JSON string version into evaluator for readability
+        ground_truth_text = json.dumps(ground_truth_entry, indent=2)
+
+        eval_result = evaluate_agent_output(
+            raw_output,
+            question,
+            ground_truth=ground_truth_text
+        )
+
+        # Optional: store it in the output
+        result["ground_truth"] = ground_truth_entry
         result["evaluation"] = eval_result
 
         # Print summary
