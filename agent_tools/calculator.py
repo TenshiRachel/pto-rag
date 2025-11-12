@@ -77,10 +77,17 @@ class CalculatorTool:
 
         # Identify variables referenced in the formula
         variables = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", formula)
-
         results = []
+
         for record in data:
-            local_vars = {var: record.get(var) for var in variables}
+            # Normalize keys
+            normalized = {
+                re.sub(r'[\s\-]+', '_', k.strip().lower()): v
+                for k, v in record.items()
+            }
+
+            local_vars = {var: normalized.get(var) for var in variables}
+
             if None in local_vars.values():
                 results.append({
                     period_key: record.get(period_key),
@@ -89,7 +96,6 @@ class CalculatorTool:
                 continue
 
             try:
-                # Safe evaluation environment
                 value = eval(formula, {"__builtins__": {}}, local_vars)
             except Exception as e:
                 results.append({
@@ -106,6 +112,7 @@ class CalculatorTool:
             })
 
         return json.dumps(results, indent=2)
+
 
     def as_tool(self):
         """Expose this as a LangChain-compatible tool."""
