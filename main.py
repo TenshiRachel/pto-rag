@@ -152,18 +152,11 @@ if __name__ == '__main__':
     chunking_evaluator = ChunkingEvaluator(all_docs)
 
     results = chunking_evaluator.evaluate_chunking_strategy(
-        chunk_sizes=[700, 800, 900, 1000],
-        chunk_overlaps=[100, 200, 300]
+        chunk_sizes=[600, 700, 800],
+        chunk_overlaps=[100, 150, 200]
     )
 
-    print("\n--- Evaluation Results ---")
-    for r in results:
-        print(f"\nConfig: size={r['chunk_size']}, overlap={r['chunk_overlap']}")
-        print(f"  Chunks: {r['num_chunks']}")
-        print(f"  Avg Length: {r['avg_chunk_length']:.0f} ± {r['std_chunk_length']:.0f}")
-        print(f"  Context Preservation: {r['context_preservation']:.2%}")
-        print(f"  Section Coherence: {r['section_coherence']:.2%}")
-        print(f"  Boundary Quality: {r['boundary_quality']:.2%}")
+    chunking_evaluator.print_evaluation_report(results)
 
     # Find optimal configuration
     optimal_chunk_config = chunking_evaluator.find_optimal_config(results)

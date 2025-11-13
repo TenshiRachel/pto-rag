@@ -6,10 +6,9 @@ import time
 import asyncio
 import pdfplumber
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 
@@ -196,25 +195,47 @@ def parse_pdf_with_tables(pdf_path, report_name, year=None):
 # ============================================================================
 
 class ChunkingEvaluator:
-    """Evaluate chunking strategies using context recall and relevance metrics"""
+    """
+    Evaluate chunking strategies using static metrics only.
+    Fast evaluation without requiring embedding models or retrieval testing.
+    """
 
-    def __init__(self, documents: List[Document]):
+    def __init__(
+        self,
+        documents: List[Document],
+        min_chunk_size: int = 500,
+        max_chunk_size: int = 2000,
+        target_chunk_size: int = 1000
+    ):
+        """
+        Args:
+            documents: Documents to evaluate
+            min_chunk_size: Minimum acceptable chunk size (penalize below this)
+            max_chunk_size: Maximum acceptable chunk size (penalize above this)
+            target_chunk_size: Ideal chunk size for your use case
+        """
         self.documents = documents
+        self.min_chunk_size = min_chunk_size
+        self.max_chunk_size = max_chunk_size
+        self.target_chunk_size = target_chunk_size
 
     def evaluate_chunking_strategy(
         self,
         chunk_sizes: List[int],
-        chunk_overlaps: List[int],
-        test_queries: List[str] = None
-    ) -> Dict:
+        chunk_overlaps: List[int]
+    ) -> List[Dict]:
         """
-        Evaluate different chunking configurations
+        Evaluate different chunking configurations using static metrics.
 
         Returns metrics for each configuration:
         - avg_chunk_size: Average size of chunks
         - num_chunks: Total number of chunks
         - context_preservation: How well section context is preserved
-        - chunk_coherence: Measure of semantic coherence within chunks
+        - section_coherence: Measure of semantic coherence within chunks
+        - boundary_quality: Quality of chunk boundaries
+        - information_density: Ratio of meaningful content to filler
+        - size_appropriateness: How well chunks match target size
+        - semantic_completeness: Whether chunks contain complete thoughts
         """
         results = []
 
@@ -238,9 +259,14 @@ class ChunkingEvaluator:
                     "num_chunks": len(chunks),
                     "avg_chunk_length": np.mean([len(c.page_content) for c in chunks]),
                     "std_chunk_length": np.std([len(c.page_content) for c in chunks]),
+                    
                     "context_preservation": self._calculate_context_preservation(chunks),
                     "section_coherence": self._calculate_section_coherence(chunks),
-                    "boundary_quality": self._calculate_boundary_quality(chunks)
+                    "boundary_quality": self._calculate_boundary_quality(chunks),
+                    
+                    "information_density": self._calculate_information_density(chunks),
+                    "size_appropriateness": self._calculate_size_appropriateness(chunks),
+                    "semantic_completeness": self._calculate_semantic_completeness(chunks),
                 }
 
                 results.append(metrics)
@@ -298,19 +324,198 @@ class ChunkingEvaluator:
 
         return good_boundaries / len(chunks) if chunks else 0.0
 
-    def find_optimal_config(self, results: List[Dict]) -> Dict:
-        """Find the best chunking configuration based on composite score"""
-        for r in results:
-            # Composite score: weighted combination of metrics
-            r["composite_score"] = (
-                0.3 * r["context_preservation"] +
-                0.3 * r["section_coherence"] +
-                0.2 * r["boundary_quality"] +
-                0.2 * (1.0 - abs(r["avg_chunk_length"] - r["chunk_size"]) / r["chunk_size"])
-            )
+    def _calculate_information_density(self, chunks: List[Document]) -> float:
+        """
+        Measure information density: ratio of meaningful content to filler.
+        Higher density = more useful for retrieval.
+        Score: 0-1 (higher is better)
+        """
+        if not chunks:
+            return 0.0
+        
+        density_scores = []
+        
+        # Words that indicate meaningful financial content
+        meaningful_keywords = {
+            'revenue', 'profit', 'loss', 'earnings', 'growth', 'decline',
+            'assets', 'liabilities', 'equity', 'cash', 'debt', 'margin',
+            'quarter', 'year', 'increased', 'decreased', 'million', 'billion',
+            'risk', 'strategy', 'operations', 'management', 'market', 'sales',
+            'income', 'expenses', 'dividend', 'shareholder', 'investment',
+            'opex', 'operating', 'efficiency', 'ratio', 'gross'
+        }
+        
+        for chunk in chunks:
+            content = chunk.page_content.lower()
+            words = content.split()
+            
+            if not words:
+                density_scores.append(0.0)
+                continue
+            
+            # Count meaningful words
+            meaningful_count = sum(1 for word in words if any(kw in word for kw in meaningful_keywords))
+            
+            # Count numbers (financial data)
+            number_count = sum(1 for word in words if re.search(r'\d', word))
+            
+            # Density = (meaningful words + numbers) / total words
+            density = (meaningful_count + number_count) / len(words)
+            density_scores.append(min(density, 1.0))  # Cap at 1.0
+        
+        return np.mean(density_scores)
 
+    def _calculate_size_appropriateness(self, chunks: List[Document]) -> float:
+        """
+        Penalize chunks that are too small (insufficient context) or 
+        too large (too much noise). Uses a bell curve around target size.
+        Score: 0-1 (higher is better)
+        
+        Prevents bias for small or large chunks
+        """
+        if not chunks:
+            return 0.0
+        
+        scores = []
+        for chunk in chunks:
+            length = len(chunk.page_content)
+            
+            # Heavily penalize chunks outside acceptable range
+            if length < self.min_chunk_size:
+                penalty = (length / self.min_chunk_size) ** 2  # Quadratic penalty
+                scores.append(penalty * 0.5)  # Max 0.5 score if below min
+            elif length > self.max_chunk_size:
+                penalty = (self.max_chunk_size / length) ** 2
+                scores.append(penalty * 0.7)  # Max 0.7 score if above max
+            else:
+                # Gaussian curve around target size
+                distance = abs(length - self.target_chunk_size)
+                normalized_distance = distance / (self.target_chunk_size * 0.5)
+                score = np.exp(-normalized_distance ** 2)
+                scores.append(score)
+        
+        return np.mean(scores)
+
+    def _calculate_semantic_completeness(self, chunks: List[Document]) -> float:
+        """
+        Estimate if chunks contain complete thoughts/concepts.
+        Checks for: complete sentences, presence of key financial terms,
+        balanced structure (not just fragments).
+        Score: 0-1 (higher is better)
+        """
+        if not chunks:
+            return 0.0
+        
+        completeness_scores = []
+        
+        for chunk in chunks:
+            content = chunk.page_content.strip()
+            if not content:
+                completeness_scores.append(0.0)
+                continue
+            
+            score = 0.0
+            
+            # 1. Check for complete sentences (ends with punctuation)
+            if content[-1] in '.!?':
+                score += 0.3
+            
+            # 2. Check for sentence structure (has multiple sentences)
+            sentence_count = len(re.findall(r'[.!?]+', content))
+            if sentence_count >= 2:
+                score += 0.3
+            elif sentence_count == 1:
+                score += 0.15
+            
+            # 3. Check for balanced content (not just a header or fragment)
+            word_count = len(content.split())
+            if word_count >= 50:  # Reasonable amount of text
+                score += 0.2
+            elif word_count >= 20:
+                score += 0.1
+            
+            # 4. Check for contextual clues (section info, temporal markers)
+            has_context = bool(re.search(r'\b(year|quarter|fiscal|period|ended)\b', content.lower()))
+            if has_context:
+                score += 0.2
+            
+            completeness_scores.append(min(score, 1.0))
+        
+        return np.mean(completeness_scores)
+
+    def find_optimal_config(
+        self,
+        results: List[Dict],
+        weights: Optional[Dict[str, float]] = None
+    ) -> Dict:
+        """
+        Find the best chunking configuration based on composite score.
+        
+        Uses balanced weights that don't systematically favor small or large chunks.
+        
+        Args:
+            results: List of metric dictionaries from evaluate_chunking_strategy
+            weights: Custom weights for metrics (optional)
+        """
+        if weights is None:
+            # Optimized weights to avoid bias toward any chunk size
+            weights = {
+                # Context metrics (20%) - Secondary but important
+                "context_preservation": 0.08,
+                "section_coherence": 0.07,
+                "boundary_quality": 0.05,
+                
+                # Retrieval metrics (80%) - Primary drivers
+                "information_density": 0.30,      # Financial data presence
+                "size_appropriateness": 0.20,     # Balanced size penalty
+                "semantic_completeness": 0.30,    # Complete thoughts
+            }
+        
+        for r in results:
+            score = 0.0
+            for metric, weight in weights.items():
+                if metric in r:
+                    score += weight * r[metric]
+            r["composite_score"] = score
+        
         optimal = max(results, key=lambda x: x["composite_score"])
         return optimal
+    
+    def print_evaluation_report(self, results: List[Dict], top_n: int = 5):
+        """
+        Print a detailed comparison report of top configurations.
+        """
+        # Calculate composite scores
+        self.find_optimal_config(results)
+        
+        # Sort by composite score
+        sorted_results = sorted(results, key=lambda x: x["composite_score"], reverse=True)
+        
+        print("\n" + "="*80)
+        print(f"CHUNKING EVALUATION REPORT (Top {top_n} Configurations)")
+        print("="*80)
+        
+        for idx, r in enumerate(sorted_results[:top_n], 1):
+            print(f"\n#{idx} CONFIG: size={r['chunk_size']}, overlap={r['chunk_overlap']}")
+            print(f"  Composite Score: {r['composite_score']:.3f}")
+            print(f"\n  Stats:")
+            print(f"    • Chunks: {r['num_chunks']}")
+            print(f"    • Avg Length: {r['avg_chunk_length']:.0f} ± {r['std_chunk_length']:.0f}")
+            print(f"\n  Context Metrics:")
+            print(f"    • Context Preservation: {r['context_preservation']:.2%}")
+            print(f"    • Section Coherence: {r['section_coherence']:.2%}")
+            print(f"    • Boundary Quality: {r['boundary_quality']:.2%}")
+            print(f"\n  Retrieval Metrics:")
+            print(f"    • Information Density: {r['information_density']:.2%}")
+            print(f"    • Size Appropriateness: {r['size_appropriateness']:.2%}")
+            print(f"    • Semantic Completeness: {r['semantic_completeness']:.2%}")
+            
+            if idx < top_n:
+                print(f"  {'-'*76}")
+        
+        print("\n" + "="*80)
+        print("RECOMMENDED: Use configuration #1")
+        print("="*80)
 
 
 # ============================================================================
