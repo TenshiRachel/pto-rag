@@ -180,7 +180,8 @@ if __name__ == '__main__':
         docs=[doc.page_content for doc in chunked_docs],
         ids=[doc.metadata.get("chunk_id", i) for i, doc in enumerate(chunked_docs)]
     )
-
+    bm25_index.save("bm25_index.pkl")
+    
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:
         test_questions = json.load(f)
