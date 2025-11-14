@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 from langchain_core.documents import Document
 from langchain.tools import StructuredTool
 
+from sentence_transformers import CrossEncoder
+
 class RetrieverTool:
     """
     A FAISS-backed retriever with optional caching and dynamic-K.
@@ -25,23 +27,45 @@ class RetrieverTool:
     def __init__(
         self,
         faiss_store,
+        bm25_store,
         default_k: int = 12,
         cache: Optional[Dict[str, List[Document]]] = None,
         use_dynamic_k: bool = False,
         min_k: int = 1,
         max_k: int = 30,
+        use_reranking: bool = False,
+        reranker_model: str = "BAAI/bge-reranker-base",
+        relevance_threshold: float = 0.5,
     ):
         self.faiss_store = faiss_store
+        self.bm25_store = bm25_store
+        self.id_to_doc = {doc.metadata["chunk_id"]: doc for doc in faiss_store.docstore._dict.values()}
         self.default_k = default_k
         self.cache = cache
         self.use_dynamic_k = use_dynamic_k
         self.min_k = min_k
         self.max_k = max_k
+        self.use_reranking = use_reranking
+        self.relevance_threshold = relevance_threshold
+
+        # Initialize reranker if requested
+        self.reranker = None
+        if self.use_reranking:
+            self.reranker = CrossEncoder(reranker_model)
 
         # diagnostics for benchmarking
         self.last_pairs: List[Tuple[Optional[str], Optional[int]]] = []
         self.last_k_used: Optional[int] = None
         self.last_hit: bool = False
+        self.last_scores: List[float] = []  # reranking scores
+        self.last_reranked: bool = False  # whether reranking was applied
+        self.last_adaptive_expanded: bool = False  # whether adaptive retrieval expanded k
+        self.last_initial_k: Optional[int] = None  # k before adaptive expansion
+        self.last_query: Optional[str] = None  # the actual query passed to retriever
+        self.last_documents: List[Document] = []  # the actual retrieved documents with content
+        
+        # full diagnostics history (for evaluation)
+        self.retrieval_history: List[Dict[str, Any]] = []
 
     # ---------- internal helpers ----------
 
@@ -91,38 +115,243 @@ class RetrieverTool:
     # ---------- main retrieval ----------
 
     def forward(self, query: str, k: Optional[int] = None) -> List[Document]:
-        # cache hit path
+        """
+        Flow when  use_dynamic_k=True:
+        1. Check cache - if hit, return cached docs
+        2. Determine dynamic K from query or use provided K
+        3. Retrieve initial K documents
+        4. Rerank if enabled
+        5. If results unsatisfactory (low avg score), expand and retrieve more
+        6. Return top K documents (sorted by relevance if reranked)
+        """
+        # 1. Cache hit path
         if self.cache is not None and query in self.cache:
             docs = self.cache[query]
             self.last_hit = True
             self.last_pairs = self._pairs_from_docs(docs)
             self.last_k_used = len(docs)
+            self.last_scores = []  # No reranking on cache hit
+            self.last_reranked = False
+            self.last_adaptive_expanded = False
+            self.last_initial_k = None
+            self.last_query = query
+            self.last_documents = docs
+            
+            # Log cache hit
+            self._log_retrieval(query, from_cache=True, final_docs=docs)
             return docs
 
-        # dynamic K (only when enabled and no explicit k from agent)
-        used_k = None
+        # 2. dynamic K (only when enabled and no explicit k from agent)
+        target_k = None
         if self.use_dynamic_k:
-            used_k = k if k is not None else self._infer_k_from_query(query)
+            target_k = k if k is not None else self._infer_k_from_query(query)
 
-        if used_k is None:
-            used_k = self.default_k  # fallback
+        if target_k is None:
+            target_k = self.default_k  # fallback
 
         # clamp
-        used_k = max(self.min_k, min(self.max_k, int(used_k)))
+        target_k = max(self.min_k, min(self.max_k, int(target_k)))
+        
+        # reset diagnostics for this retrieval
+        self.last_initial_k = target_k
+        self.last_reranked = False
+        self.last_adaptive_expanded = False
+        self.last_scores = []
 
-        # do the actual retrieval
-        docs = self.faiss_store.similarity_search(query, k=used_k)
+        # 3. Hybrid Retrieval: FAISS + BM25
+        docs = self._retrieve_from_faiss_and_bm25(query, target_k)
 
-        # update diagnostics
+        # 4. rerank if enabled
+        if self.use_reranking and self.reranker is not None:
+            docs = self._rerank_documents(query, docs)
+            self.last_reranked = True
+            
+            # 5. adaptively expand if dynamic_k enabled and results unsatisfactory
+            # Only expand if agent didn't explicitly specify k
+            if self.use_dynamic_k and k is None and target_k < self.max_k:
+                docs = self._adaptive_retrieve(query, docs, target_k)
+        
+        # 6. final top K (already sorted by relevance during reranking)
+        final_docs = docs[:target_k]
+
+        # Update diagnostics
         self.last_hit = False
-        self.last_pairs = self._pairs_from_docs(docs)
-        self.last_k_used = used_k
+        self.last_pairs = self._pairs_from_docs(final_docs)
+        self.last_k_used = len(final_docs)
+        self.last_query = query
+        self.last_documents = final_docs
+        
+        # Log this retrieval with all metrics
+        self._log_retrieval(query, from_cache=False, final_docs=final_docs)
 
-        # store to cache (preserve metadata!) for subsequent hits
+        # Store final docs to cache
         if self.cache is not None:
-            self.cache[query] = docs
+            self.cache[query] = final_docs
 
+        return final_docs
+
+    def _retrieve_from_faiss_and_bm25(self, query: str, target_k: int):
+        faiss_docs = self.faiss_store.similarity_search(query, k=target_k)
+
+        bm25_docs = []
+        if self.bm25_store is not None:
+            bm25_results = self.bm25_store.search(query, top_k=target_k)
+
+            # Convert BM25 IDs to documents
+            bm25_docs = []
+            for chunk_id, score in bm25_results:
+                doc = self.id_to_doc.get(chunk_id)
+                if doc is not None:
+                    bm25_docs.append(doc)
+
+        # Combine (concatenate, dedupe, preserve order)
+        docs = faiss_docs + bm25_docs
+        seen = set()
+        unique_docs = []
+        for d in docs:
+            cid = d.metadata.get("chunk_id")
+            if cid not in seen:
+                seen.add(cid)
+                unique_docs.append(d)
+
+        docs = unique_docs
         return docs
+    
+
+    def _rerank_documents(self, query: str, docs: List[Document]) -> List[Document]:
+        """
+        Rerank documents using cross-encoder model.
+        Returns documents sorted by relevance score (highest first).
+        """
+        if not docs:
+            return docs
+        
+        # get scores from cross-encoder
+        pairs = [(query, doc.page_content) for doc in docs]
+        scores = self.reranker.predict(pairs)
+        
+        # attach scores to documents and sort
+        scored_docs = []
+        for doc, score in zip(docs, scores):
+            # Convert to Python float for JSON serialization
+            score_float = float(score)
+            setattr(doc, '_rerank_score', score_float)
+            scored_docs.append((doc, score_float))
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        
+        # update and return scores (already converted to Python float)
+        self.last_scores = [score for _, score in scored_docs]
+        return [doc for doc, _ in scored_docs]
+
+    def _adaptive_retrieve(
+        self, 
+        query: str, 
+        initial_docs: List[Document], 
+        target_k: int
+    ) -> List[Document]:
+        """
+        Adaptively retrieve more documents if initial results lack sufficient relevance.
+        Used when dynamic_k is enabled.
+        
+        Strategy:
+        - Check average relevance score of top results
+        - If below threshold and we haven't reached max_k, double k and retrieve more
+        - Rerank the expanded set
+        - Return sorted documents (caller will slice to top K)
+        """
+        if not initial_docs or not self.last_scores:
+            return initial_docs
+        
+        # average score of initial results
+        avg_score = sum(self.last_scores) / len(self.last_scores)
+
+        # if quality is good or already at max_k
+        if avg_score >= self.relevance_threshold or target_k >= self.max_k:
+            return initial_docs
+        
+        # double k or cap at the max_k
+        expanded_k = min(target_k * 2, self.max_k)
+        
+        # if no expansion is needed (target already hit), use original docs
+        if expanded_k <= target_k:
+            return initial_docs
+        
+        # retrieve with expanded k and rerank
+        self.last_adaptive_expanded = True
+        expanded_docs = self._retrieve_from_faiss_and_bm25(query, expanded_k)
+        expanded_docs = self._rerank_documents(query, expanded_docs)
+        
+        # return ALL sorted documents
+        return expanded_docs
+    
+    def _log_retrieval(self, query: str, from_cache: bool, final_docs: List[Document]) -> None:
+        """
+        Log comprehensive diagnostics for this retrieval for evaluation purposes.
+        """
+        log_entry = {
+            'query': query,
+            'from_cache': from_cache,
+            'k_requested': self.last_initial_k,
+            'k_final': len(final_docs),
+            'reranked': self.last_reranked,
+            'adaptive_expanded': self.last_adaptive_expanded,
+            'scores': self.last_scores.copy() if self.last_scores else [],
+            'score_stats': self._compute_score_stats() if self.last_scores else {},
+            'retrieved_pairs': self.last_pairs.copy(),
+        }
+        self.retrieval_history.append(log_entry)
+    
+    def _compute_score_stats(self) -> Dict[str, float]:
+        """Compute statistics on reranking scores."""
+        if not self.last_scores:
+            return {}
+        
+        scores = self.last_scores
+        return {
+            'min': min(scores),
+            'max': max(scores),
+            'mean': sum(scores) / len(scores),
+            'median': sorted(scores)[len(scores) // 2],
+        }
+    
+    def get_retrieval_report(self) -> Dict[str, Any]:
+        """
+        Generate a comprehensive evaluation report of retrieval performance.
+        
+        Returns metrics useful for evaluating reranking effectiveness:
+        - Cache hit rate
+        - Reranking usage
+        - Adaptive expansion rate
+        - Score distributions
+        """
+        if not self.retrieval_history:
+            return {'error': 'No retrieval history available'}
+        
+        total = len(self.retrieval_history)
+        cache_hits = sum(1 for entry in self.retrieval_history if entry['from_cache'])
+        reranked = sum(1 for entry in self.retrieval_history if entry['reranked'])
+        expanded = sum(1 for entry in self.retrieval_history if entry['adaptive_expanded'])
+        
+        # Collect all scores for distribution analysis
+        all_scores = []
+        for entry in self.retrieval_history:
+            all_scores.extend(entry['scores'])
+        
+        report = {
+            'total_retrievals': total,
+            'cache_hit_rate': cache_hits / total if total > 0 else 0,
+            'reranking_rate': reranked / total if total > 0 else 0,
+            'adaptive_expansion_rate': expanded / total if total > 0 else 0,
+            'score_distribution': {
+                'min': min(all_scores) if all_scores else None,
+                'max': max(all_scores) if all_scores else None,
+                'mean': sum(all_scores) / len(all_scores) if all_scores else None,
+                'count': len(all_scores),
+            },
+            'history': self.retrieval_history,
+        }
+        
+        return report
 
     # ---------- tool wrapper ----------
 
@@ -164,8 +393,20 @@ class RetrieverTool:
 
     def _tool_func(self, request: str) -> str:
         query_text, k_hint = self._parse_request(request)
-        self.forward(query_text, k=k_hint)
-        return f"retrieved_k={self.last_k_used}; pairs={self.last_pairs[:6]}"
+        docs = self.forward(query_text, k=k_hint)
+        
+        # Format documents with content for the agent
+        result_lines = [f"Retrieved {len(docs)} documents:\n"]
+        for i, doc in enumerate(docs, 1):
+            report = doc.metadata.get("report") or doc.metadata.get("source", "Unknown")
+            page = doc.metadata.get("page", "?")
+            content = doc.page_content.strip()
+            
+            result_lines.append(f"[{i}] {report} (Page {page}):")
+            result_lines.append(content)
+            result_lines.append("")  # blank line between docs
+        
+        return "\n".join(result_lines)
 
     def as_tool(self):
         return StructuredTool.from_function(

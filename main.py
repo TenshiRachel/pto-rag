@@ -5,9 +5,9 @@ from pyinstrument import Profiler
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.agents import initialize_agent, AgentType
-# from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from pdf_ingestion_chunking import process_all, chunk_documents
-from build_indices import build_faiss_index
+from build_indices import build_faiss_index, BM25Index
 from agent_tools.calculator import CalculatorTool
 from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
@@ -80,8 +80,25 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
 
     # 2. build FAISS + embeddings timing
     embed_start = time.time()
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    faiss_store = build_faiss_index(chunked_docs, embeddings)
+    # embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    # faiss_store = build_faiss_index(chunked_docs, embeddings)
+
+    # bm25_index = BM25Index(
+    #     docs=[doc.page_content for doc in chunked_docs],
+    #     ids=[doc.metadata.get("chunk_id", i) for i, doc in enumerate(chunked_docs)]
+    # )
+    
+    # Load local instead of build
+    print("Open faiss index")
+    faiss_store = FAISS.load_local(
+        "faiss_index",
+        embeddings=OpenAIEmbeddings(model="text-embedding-3-small"),
+        allow_dangerous_deserialization=True
+    )
+
+    print("Open BM25 Index")
+    bm25_index = BM25Index.load("bm25_index.pkl")
+
     embed_end = time.time()
     index_build_time_s = embed_end - embed_start
 
@@ -103,14 +120,18 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
         timing_callback = TimingCallback()
         timing_callback.start_total_timer()
 
-        # decide if this run is optimized (caching + dynamic k) or baseline
+        # decide if this run is optimized (caching + dynamic k + reranking) or baseline
         is_optimized = use_cache  # same meaning in your CLI
 
         retr_tool = RetrieverTool(
             faiss_store=faiss_store,
+            bm25_store=bm25_index,
             default_k=12,
-            cache=retrieval_cache,  # cache toggled only by use_cache
+            cache=retrieval_cache if is_optimized else None,
             use_dynamic_k=use_dynamic_k,  # dynamic-K toggled separately
+            use_reranking=True,  # enable reranking in optimized mode
+            reranker_model="BAAI/bge-reranker-base",
+            relevance_threshold=0.5,
         )
 
         comp_tool = ComparisonTool()
@@ -197,10 +218,28 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             "prose": prose,
 
             # retrieval diagnostics
+            "retriever_query": getattr(retr_tool, "last_query", None),
             "retrieved_pairs": retrieved_pairs,
+            "retrieved_chunks": [
+                {
+                    "report": doc.metadata.get("report") or doc.metadata.get("source"),
+                    "page": doc.metadata.get("page"),
+                    "content": doc.page_content,  # full chunk content
+                }
+                for doc in getattr(retr_tool, "last_documents", [])
+            ],
             "k_used": k_used,
+            "initial_k": getattr(retr_tool, "last_initial_k", None),
+            "adaptive_expanded": getattr(retr_tool, "last_adaptive_expanded", False),
+            "reranked": getattr(retr_tool, "last_reranked", False),
+            "rerank_scores": getattr(retr_tool, "last_scores", []),
+            
+            # ground truth metrics
             "precision_at_k": precision_at_k,
             "recall_at_k": recall_at_k,
+            "relevant_retrieved": len(intersection),
+            "total_retrieved": len(retrieved_set),
+            "total_relevant": len(gt_set),
 
             # timing
             "elapsed_time": agent_end - agent_start,
