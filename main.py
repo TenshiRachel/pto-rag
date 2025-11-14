@@ -9,7 +9,7 @@ from langchain.agents import initialize_agent, AgentType, AgentExecutor, create_
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder, SystemMessagePromptTemplate
 # from langchain_community.vectorstores import FAISS
 from pdf_ingestion_chunking import process_all_async, ChunkingEvaluator, SmartFinancialChunker
-from build_indices import build_faiss_index
+from build_indices import build_faiss_index, BM25Index
 from agent_tools.calculator import CalculatorTool
 from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
@@ -175,6 +175,11 @@ if __name__ == '__main__':
 
     EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small")  # Can be 'text-embedding-3-large'
     faiss_store = build_faiss_index(chunked_docs, EMBEDDING_MODEL)
+
+    bm25_index = BM25Index(
+        docs=[doc.page_content for doc in chunked_docs],
+        ids=[doc.metadata.get("chunk_id", i) for i, doc in enumerate(chunked_docs)]
+    )
 
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:
