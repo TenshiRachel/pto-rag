@@ -179,7 +179,7 @@
     "precision_at_k": 0.75,
     "recall_at_k": 1.0,
     "graded_precision_at_k": 0.4166666666666667,
-    "graded_recall_at_k": 1.0,
+    "graded_recall_at_k": 0.6666666666666666,
     "elapsed_time": 9.71628451347351,
     "callback_timing": {
       "T_retrieve": 0.3605,

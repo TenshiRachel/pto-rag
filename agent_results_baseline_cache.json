@@ -175,7 +175,7 @@
     "precision_at_k": 1.0,
     "recall_at_k": 1.0,
     "graded_precision_at_k": 0.5454545454545454,
-    "graded_recall_at_k": 1.0,
+    "graded_recall_at_k": 0.6666666666666666,
     "elapsed_time": 10.992176294326782,
     "callback_timing": {
       "T_retrieve": 0.3726,
@@ -291,7 +291,7 @@
     "precision_at_k": 0.9090909090909091,
     "recall_at_k": 1.0,
     "graded_precision_at_k": 0.5,
-    "graded_recall_at_k": 1.0,
+    "graded_recall_at_k": 0.6666666666666666,
     "elapsed_time": 13.941041707992554,
     "callback_timing": {
       "T_retrieve": 0.4188,

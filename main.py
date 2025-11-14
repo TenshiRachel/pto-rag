@@ -67,22 +67,13 @@ def create_agent(faiss_store, retr_tool, comp_tool, calc_tool):
     )
     return agent
 
-def _normalize_relevant_groups(relevant_groups):
-    """
-    Return: dict[group_name] -> dict[report_id] -> int weight (2=full, 1=partial)
-    Accepts:
-      - dict of groups -> dict of report->weight
-      - dict of report->weight (single implicit group)
-      - list of strings [report,...]  -> single group, all full(=2)
-      - list of dicts; supports either {"report": "...", "weight": 1/2, "group": "..."}
-        or a dict mapping report->weight to be merged into a single group.
-    """
+def normalize_relevant_groups(relevant_groups):
     if not relevant_groups:
         return {}
 
-    # dict case
+    # dict case: either group->dict or single dict of report->weight
     if isinstance(relevant_groups, dict):
-        if all(isinstance(v, dict) for v in relevant_groups.values()):  # group -> {rep: weight}
+        if all(isinstance(v, dict) for v in relevant_groups.values()):
             out = {}
             for g, d in relevant_groups.items():
                 sub = {}
@@ -91,9 +82,9 @@ def _normalize_relevant_groups(relevant_groups):
                         sub[str(rep)] = int(w)
                     except Exception:
                         sub[str(rep)] = 1
-                out[g] = sub
+                out[str(g)] = sub
             return out
-        else:  # single implicit group: {rep: weight}
+        else:
             sub = {}
             for rep, w in relevant_groups.items():
                 try:
@@ -105,12 +96,25 @@ def _normalize_relevant_groups(relevant_groups):
     # list case
     if isinstance(relevant_groups, list):
         if all(isinstance(x, str) for x in relevant_groups):
-            return {"__all__": {rep: 2 for rep in relevant_groups}}  # strings => full
+            return {"__all__": {rep: 2 for rep in relevant_groups}}
+
         out = {}
         for el in relevant_groups:
             if not isinstance(el, dict):
                 continue
-            # case: {"report": "...", "weight": 1/2, "group": "..."}
+
+            # NEW: year-grouped shape: {"year": "...", "docs": {...}}
+            if "year" in el and "docs" in el and isinstance(el["docs"], dict):
+                gname = str(el["year"])
+                out[gname] = {}
+                for rep, w in el["docs"].items():
+                    try:
+                        out[gname][str(rep)] = int(w)
+                    except Exception:
+                        out[gname][str(rep)] = 1
+                continue
+
+            # existing: explicit {"report","weight","group"}
             rep = el.get("report")
             if isinstance(rep, str):
                 group = el.get("group", "__all__")
@@ -119,16 +123,15 @@ def _normalize_relevant_groups(relevant_groups):
                     w = int(w)
                 except Exception:
                     w = 2
-                out.setdefault(group, {})[rep] = w
+                out.setdefault(str(group), {})[rep] = w
                 continue
-            # case: mapping like {"FY25_10K": 2, "FY24_10K": 1}
-            for k, v in el.items():
-                if isinstance(k, str):
-                    try:
-                        vv = int(v)
-                    except Exception:
-                        vv = 1
-                    out.setdefault("__all__", {})[k] = vv
+
+            # mapping dict like {"FY25_10K": 2, ...} -> fold into single group
+            merged = {k: (int(v) if isinstance(v, (int, float, str)) else 1)
+                      for k, v in el.items() if isinstance(k, str)}
+            if merged:
+                out.setdefault("__all__", {}).update(merged)
+
         return out
 
     return {}
@@ -213,7 +216,7 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
         denom = max(len(retrieved_reports), 1)
 
         relevant_groups_raw = gt_entry.get("relevant_docs")
-        group_docs = _normalize_relevant_groups(relevant_groups_raw)
+        group_docs = normalize_relevant_groups(relevant_groups_raw)
 
         if group_docs:
             MAX_W = 2  # full relevance
@@ -251,7 +254,6 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             graded_recall_at_k = graded_recall_sum / max(len(group_docs), 1)
 
         else:
-            # (your existing exact-citation fallback stays the same)
             gt_citations = gt_entry.get("expected_citations", [])
             gt_set = set((c.get("report"), c.get("page"))
                          for c in gt_citations
