@@ -578,4 +578,15 @@ class SmartFinancialChunker:
             else:
                 table_chunks.append(table_doc)
 
-        return text_chunks + table_chunks
+        # Assign chunk IDs
+        all_chunks = text_chunks + table_chunks
+
+        for idx, doc in enumerate(all_chunks):
+            report = doc.metadata.get("report", "unknown")
+            page = doc.metadata.get("page", "NA")
+
+            chunk_id = f"{report}_p{page}_chunk{idx}"
+            doc.metadata["chunk_id"] = chunk_id
+            doc.metadata["chunk_index"] = idx
+
+        return all_chunks
