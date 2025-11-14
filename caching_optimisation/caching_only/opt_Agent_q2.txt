@@ -1,18 +1,18 @@
 
-  _     ._   __/__   _ _  _  _ _/_   Recorded: 18:17:48  Samples:  427
- /_//_/// /_\ / //_// / //_'/ //     Duration: 14.925    CPU time: 0.344
+  _     ._   __/__   _ _  _  _ _/_   Recorded: 15:43:05  Samples:  650
+ /_//_/// /_\ / //_// / //_'/ //     Duration: 12.886    CPU time: 0.625
 /   _/                      v5.1.1
 
-Profile at C:\pto-rag\main.py:101
+Profile at C:\pto-rag\main.py:167
 
-14.924 run_benchmark  main.py:71
-└─ 14.918 AgentExecutor.invoke  langchain\chains\base.py:128
-      [51 frames hidden]  langchain, langchain_core, langchain_...
-         10.814 _SSLSocket.read  <built-in>
-         3.601 _SSLSocket.read  <built-in>
-         0.433 StructuredTool._run  langchain_core\tools\structured.py:70
-         └─ 0.433 RetrieverTool._tool_func  agent_tools\retriever.py:165
-            └─ 0.433 RetrieverTool.forward  agent_tools\retriever.py:93
-               └─ 0.433 FAISS.similarity_search  langchain_community\vectorstores\faiss.py:623
+12.885 run_benchmark  main.py:137
+└─ 12.877 AgentExecutor.invoke  langchain\chains\base.py:128
+      [73 frames hidden]  langchain, langchain_core, langchain_...
+         8.711 _SSLSocket.read  <built-in>
+         2.773 _SSLSocket.read  <built-in>
+         0.332 StructuredTool._run  langchain_core\tools\structured.py:70
+         └─ 0.332 RetrieverTool._tool_func  agent_tools\retriever.py:165
+            └─ 0.332 RetrieverTool.forward  agent_tools\retriever.py:93
+               └─ 0.332 FAISS.similarity_search  langchain_community\vectorstores\faiss.py:623
                      [22 frames hidden]  langchain_community, langchain_openai...
 

@@ -67,6 +67,72 @@ def create_agent(faiss_store, retr_tool, comp_tool, calc_tool):
     )
     return agent
 
+def _normalize_relevant_groups(relevant_groups):
+    """
+    Return: dict[group_name] -> dict[report_id] -> int weight (2=full, 1=partial)
+    Accepts:
+      - dict of groups -> dict of report->weight
+      - dict of report->weight (single implicit group)
+      - list of strings [report,...]  -> single group, all full(=2)
+      - list of dicts; supports either {"report": "...", "weight": 1/2, "group": "..."}
+        or a dict mapping report->weight to be merged into a single group.
+    """
+    if not relevant_groups:
+        return {}
+
+    # dict case
+    if isinstance(relevant_groups, dict):
+        if all(isinstance(v, dict) for v in relevant_groups.values()):  # group -> {rep: weight}
+            out = {}
+            for g, d in relevant_groups.items():
+                sub = {}
+                for rep, w in (d or {}).items():
+                    try:
+                        sub[str(rep)] = int(w)
+                    except Exception:
+                        sub[str(rep)] = 1
+                out[g] = sub
+            return out
+        else:  # single implicit group: {rep: weight}
+            sub = {}
+            for rep, w in relevant_groups.items():
+                try:
+                    sub[str(rep)] = int(w)
+                except Exception:
+                    sub[str(rep)] = 1
+            return {"__all__": sub}
+
+    # list case
+    if isinstance(relevant_groups, list):
+        if all(isinstance(x, str) for x in relevant_groups):
+            return {"__all__": {rep: 2 for rep in relevant_groups}}  # strings => full
+        out = {}
+        for el in relevant_groups:
+            if not isinstance(el, dict):
+                continue
+            # case: {"report": "...", "weight": 1/2, "group": "..."}
+            rep = el.get("report")
+            if isinstance(rep, str):
+                group = el.get("group", "__all__")
+                w = el.get("weight", el.get("w", 2))
+                try:
+                    w = int(w)
+                except Exception:
+                    w = 2
+                out.setdefault(group, {})[rep] = w
+                continue
+            # case: mapping like {"FY25_10K": 2, "FY24_10K": 1}
+            for k, v in el.items():
+                if isinstance(k, str):
+                    try:
+                        vv = int(v)
+                    except Exception:
+                        vv = 1
+                    out.setdefault("__all__", {})[k] = vv
+        return out
+
+    return {}
+
 
 def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
     load_dotenv()
@@ -138,39 +204,67 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             t1 = time.time()
             warm_cache_latency = (t1 - t0) * 1000.0  # ms
 
-        # --- ground truth relevant citations for this question ---
-        gt_entry = gt_items[idx - 1]  # same index we used to build benchmark_questions
-        gt_citations = gt_entry.get("expected_citations", [])
-        # normalize ground truth as set of (report, page) tuples
-        gt_set = set(
-            (c.get("report"), c.get("page"))
-            for c in gt_citations
-            if c.get("report") is not None and c.get("page") is not None
-        )
+        # --- ground truth relevant citations OR grouped relevance ---
+        gt_entry = gt_items[idx - 1]
 
-        # --- retrieved docs for this question (report, page) from retriever ---
         retrieved_pairs = list(getattr(retr_tool, "last_pairs", []))
-        retrieved_set = set(
-            (r[0], r[1])
-            for r in retrieved_pairs
-            if r[0] is not None and r[1] is not None
-        )
-
-        # K actually used
+        retrieved_reports = [r[0] for r in retrieved_pairs if r and r[0]]
         k_used = getattr(retr_tool, "last_k_used", None)
+        denom = max(len(retrieved_reports), 1)
 
-        # compute precision@K and recall@K
-        # precision = |retrieved ∩ gt| / |retrieved|
-        # recall    = |retrieved ∩ gt| / |gt|
-        intersection = gt_set.intersection(retrieved_set)
-        if len(retrieved_set) > 0:
-            precision_at_k = len(intersection) / len(retrieved_set)
+        relevant_groups_raw = gt_entry.get("relevant_docs")
+        group_docs = _normalize_relevant_groups(relevant_groups_raw)
+
+        if group_docs:
+            MAX_W = 2  # full relevance
+
+            # --- precision@K (binary) ---
+            hits = 0
+            for rep in retrieved_reports:
+                if any(rep in docmap for docmap in group_docs.values()):
+                    hits += 1
+            precision_at_k = hits / denom
+
+            # --- recall@K (binary, group coverage) ---
+            covered = 0
+            for _, docmap in group_docs.items():
+                if any(rep in docmap for rep in retrieved_reports):
+                    covered += 1
+            recall_at_k = covered / max(len(group_docs), 1)
+
+            # --- graded precision@K ---
+            graded_hits = 0.0
+            for rep in retrieved_reports:
+                best = 0
+                for docmap in group_docs.values():
+                    best = max(best, docmap.get(rep, 0))
+                graded_hits += 1.0 if best == 2 else (0.5 if best == 1 else 0.0)
+            graded_precision_at_k = graded_hits / denom
+
+            # --- graded recall@K ---
+            graded_recall_sum = 0.0
+            for _, docmap in group_docs.items():
+                best_w = 0
+                for rep in retrieved_reports:
+                    best_w = max(best_w, docmap.get(rep, 0))
+                graded_recall_sum += (best_w / MAX_W)
+            graded_recall_at_k = graded_recall_sum / max(len(group_docs), 1)
+
         else:
-            precision_at_k = 0.0
-        if len(gt_set) > 0:
-            recall_at_k = len(intersection) / len(gt_set)
-        else:
-            recall_at_k = 0.0
+            # (your existing exact-citation fallback stays the same)
+            gt_citations = gt_entry.get("expected_citations", [])
+            gt_set = set((c.get("report"), c.get("page"))
+                         for c in gt_citations
+                         if c.get("report") is not None and c.get("page") is not None)
+            retrieved_set = set((r[0], r[1]) for r in retrieved_pairs
+                                if r[0] is not None and r[1] is not None)
+            inter = gt_set.intersection(retrieved_set)
+
+            precision_at_k = (len(inter) / len(retrieved_set)) if retrieved_set else 0.0
+            recall_at_k = (len(inter) / len(gt_set)) if gt_set else 0.0
+            graded_precision_at_k = precision_at_k
+            graded_recall_at_k = recall_at_k
+
 
         # profiler artifacts
         profile_base = f"{'opt' if use_cache else 'base'}_Agent_q{idx}"
@@ -201,6 +295,8 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             "k_used": k_used,
             "precision_at_k": precision_at_k,
             "recall_at_k": recall_at_k,
+            "graded_precision_at_k": graded_precision_at_k,
+            "graded_recall_at_k": graded_recall_at_k,
 
             # timing
             "elapsed_time": agent_end - agent_start,
@@ -247,6 +343,7 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
         json.dump(final_payload, wf, indent=2)
 
     return final_payload
+
 
 
 # ---- CLI entrypoint so you can call this from PowerShell ----
