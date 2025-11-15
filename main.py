@@ -72,11 +72,11 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
     load_dotenv()
 
     # 1. ingestion / chunking timing
-    ingest_start = time.time()
-    all_docs = process_all()
-    chunked_docs = chunk_documents(all_docs, chunk_size=800, chunk_overlap=100)
-    ingest_end = time.time()
-    ingest_time_s = ingest_end - ingest_start
+    # ingest_start = time.time()
+    # all_docs = process_all()
+    # chunked_docs = chunk_documents(all_docs, chunk_size=800, chunk_overlap=100)
+    # ingest_end = time.time()
+    # ingest_time_s = ingest_end - ingest_start
 
     # 2. build FAISS + embeddings timing
     embed_start = time.time()
@@ -248,7 +248,7 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             "warm_cache_retrieval_time_ms": warm_cache_latency,
 
             # system-level (repeated for convenience)
-            "ingest_time_s": ingest_time_s,
+            # "ingest_time_s": ingest_time_s,
             "index_build_time_s": index_build_time_s,
 
             # profiler paths
@@ -276,7 +276,7 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
         "summary_avg_per_question_s": avg_per_q_s,
         "summary_questions": len(benchmark_questions),
         "summary_qps": len(benchmark_questions) / total_runtime_s,
-        "ingest_time_s": ingest_time_s,
+        # "ingest_time_s": ingest_time_s,
         "index_build_time_s": index_build_time_s,
     }
 
