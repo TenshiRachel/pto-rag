@@ -3,65 +3,282 @@
     "query": "Report the Gross Margin (%) over the last 5 quarters, with values.",
     "question_type": "trend",
     "expected_data_values": [
-      { "fiscal_year": "2025", "fiscal_quarter": "Q2", "gross_margin": 75.1 },
-      { "fiscal_year": "2025", "fiscal_quarter": "Q3", "gross_margin": 74.6 },
-      { "fiscal_year": "2025", "fiscal_quarter": "Q4", "gross_margin": 73.0 },
-      { "fiscal_year": "2026", "fiscal_quarter": "Q1", "gross_margin": 60.5 },
-      { "fiscal_year": "2026", "fiscal_quarter": "Q2", "gross_margin": 72.4 }
+      {
+        "fiscal_year": "2025",
+        "fiscal_quarter": "Q2",
+        "gross_margin": 75.1
+      },
+      {
+        "fiscal_year": "2025",
+        "fiscal_quarter": "Q3",
+        "gross_margin": 74.6
+      },
+      {
+        "fiscal_year": "2025",
+        "fiscal_quarter": "Q4",
+        "gross_margin": 73.0
+      },
+      {
+        "fiscal_year": "2026",
+        "fiscal_quarter": "Q1",
+        "gross_margin": 60.5
+      },
+      {
+        "fiscal_year": "2026",
+        "fiscal_quarter": "Q2",
+        "gross_margin": 72.4
+      }
     ],
     "expected_computed_values": [
-      { "fiscal_year": "2025", "fiscal_quarter": "Q2", "gross_margin": 75.1 },
-      { "fiscal_year": "2025", "fiscal_quarter": "Q3", "gross_margin": 74.6 },
-      { "fiscal_year": "2025", "fiscal_quarter": "Q4", "gross_margin": 73.0 },
-      { "fiscal_year": "2026", "fiscal_quarter": "Q1", "gross_margin": 60.5 },
-      { "fiscal_year": "2026", "fiscal_quarter": "Q2", "gross_margin": 72.4 }
+      {
+        "fiscal_year": "2025",
+        "fiscal_quarter": "Q2",
+        "gross_margin": 75.1
+      },
+      {
+        "fiscal_year": "2025",
+        "fiscal_quarter": "Q3",
+        "gross_margin": 74.6
+      },
+      {
+        "fiscal_year": "2025",
+        "fiscal_quarter": "Q4",
+        "gross_margin": 73.0
+      },
+      {
+        "fiscal_year": "2026",
+        "fiscal_quarter": "Q1",
+        "gross_margin": 60.5
+      },
+      {
+        "fiscal_year": "2026",
+        "fiscal_quarter": "Q2",
+        "gross_margin": 72.4
+      }
     ],
     "expected_citations": [
-      { "report": "FY25Q2_QuarterlyPresentation", "year": "2025", "page": 6, "section": "Q2 FY25 Financial Summary" },
-      { "report": "FY25Q3_QuarterlyPresentation", "year": "2025", "page": 6, "section": "Q3 FY25 Financial Summary" },
-      { "report": "FY25Q4_QuarterlyPresentation", "year": "2025", "page": 6, "section": "Q4 FY25 Financial Summary" },
-      { "report": "FY26Q1_QuarterlyPresentation", "year": "2026", "page": 6, "section": "Q1 FY26 Financial Summary" },
-      { "report": "FY26Q2_QuarterlyPresentation", "year": "2026", "page": 6, "section": "Q2 FY26 Financial Summary" }
+      {
+        "report": "FY25Q2_QuarterlyPresentation",
+        "year": "2025",
+        "page": 6,
+        "section": "Q2 FY25 Financial Summary"
+      },
+      {
+        "report": "FY25Q3_QuarterlyPresentation",
+        "year": "2025",
+        "page": 6,
+        "section": "Q3 FY25 Financial Summary"
+      },
+      {
+        "report": "FY25Q4_QuarterlyPresentation",
+        "year": "2025",
+        "page": 6,
+        "section": "Q4 FY25 Financial Summary"
+      },
+      {
+        "report": "FY26Q1_QuarterlyPresentation",
+        "year": "2026",
+        "page": 6,
+        "section": "Q1 FY26 Financial Summary"
+      },
+      {
+        "report": "FY26Q2_QuarterlyPresentation",
+        "year": "2026",
+        "page": 6,
+        "section": "Q2 FY26 Financial Summary"
+      }
     ],
-    "expected_tools": ["DataRetrieval", "TableExtractor"],
+    "relevant_docs": [
+      {
+        "year": "2025",
+        "docs": {
+          "FY25Q2_QuarterlyPresentation": 2,
+          "FY25Q2_10Q": 1,
+          "FY25Q3_QuarterlyPresentation": 2,
+          "FY25Q3_10Q": 1,
+          "FY25Q4_QuarterlyPresentation": 2,
+          "FY25Q4_10Q": 1
+        }
+      },
+      {
+        "year": "2026",
+        "docs": {
+          "FY26Q1_QuarterlyPresentation": 2,
+          "FY26Q1_10Q": 1,
+          "FY26Q1_PR": 1,
+          "FY26Q2_QuarterlyPresentation": 2,
+          "FY26Q2_10Q": 1,
+          "FY26Q2_PR": 1
+        }
+      }
+    ],
+    "expected_tools": [
+      "DataRetrieval",
+      "TableExtractor"
+    ],
     "expected_tools_count": 2
   },
   {
     "query": "Show Operating Expenses for the last 3 fiscal years, year-on-year comparison.",
     "question_type": "comparison",
     "expected_data_values": [
-      { "fiscal_year": "2023", "opex": 11132.0, "units": "millions USD" },
-      { "fiscal_year": "2024", "opex": 11329.0, "units": "millions USD" },
-      { "fiscal_year": "2025", "opex": 16405.0, "units": "millions USD" }
+      {
+        "fiscal_year": "2023",
+        "opex": 11132.0,
+        "units": "millions USD"
+      },
+      {
+        "fiscal_year": "2024",
+        "opex": 11329.0,
+        "units": "millions USD"
+      },
+      {
+        "fiscal_year": "2025",
+        "opex": 16405.0,
+        "units": "millions USD"
+      }
     ],
     "expected_computed_values": [
-      { "fiscal_year": "2023", "opex": 11132.0, "yoy_change (%)": null, "units": "millions USD" },
-      { "fiscal_year": "2024", "opex": 11329.0, "yoy_change (%)": 1.77, "units": "millions USD" },
-      { "fiscal_year": "2025", "opex": 16405.0, "yoy_change (%)": 44.81, "units": "millions USD" }
+      {
+        "fiscal_year": "2023",
+        "opex": 11132.0,
+        "yoy_change (%)": null,
+        "units": "millions USD"
+      },
+      {
+        "fiscal_year": "2024",
+        "opex": 11329.0,
+        "yoy_change (%)": 1.77,
+        "units": "millions USD"
+      },
+      {
+        "fiscal_year": "2025",
+        "opex": 16405.0,
+        "yoy_change (%)": 44.81,
+        "units": "millions USD"
+      }
     ],
     "expected_citations": [
-      { "report": "FY25_10K", "year": "2025", "page": 52, "section": "Consolidated Statements of Income" }
+      {
+        "report": "FY25_10K",
+        "year": "2025",
+        "page": 52,
+        "section": "Consolidated Statements of Income"
+      }
     ],
-    "expected_tools": ["DataRetrieval", "TableExtractor", "Calculator"],
+    "relevant_docs": [
+      {
+        "year": "2025",
+        "docs": {
+          "FY25_10K": 2,
+          "FY25Q1_10Q": 1,
+          "FY25Q2_10Q": 1,
+          "FY25Q3_10Q": 1,
+          "FY25Q4_PR": 1
+        }
+      },
+      {
+        "year": "2024",
+        "docs": {
+          "FY24_10K": 1,
+          "FY24Q1_10Q": 1,
+          "FY24Q2_10Q": 1,
+          "FY24Q3_10Q": 1,
+          "FY24Q4_10Q": 1
+        }
+      },
+      {
+        "year": "2023",
+        "docs": {
+          "FY23_10K": 1
+        }
+      }
+    ],
+    "expected_tools": [
+      "DataRetrieval",
+      "TableExtractor",
+      "Calculator"
+    ],
     "expected_tools_count": 3
   },
   {
     "query": "Calculate the Operating Efficiency Ratio (Opex \u00f7 Operating Income) for the last 3 fiscal years, showing the working.",
     "question_type": "ratio",
     "expected_data_values": [
-      { "fiscal_year": "2023", "opex": 11132.0, "operating_income": 4224.0, "units": "millions USD" },
-      { "fiscal_year": "2024", "opex": 11329.0, "operating_income": 32972.0, "units": "millions USD" },
-      { "fiscal_year": "2025", "opex": 16405.0, "operating_income": 81453.0, "units": "millions USD" }
+      {
+        "fiscal_year": "2023",
+        "opex": 11132.0,
+        "operating_income": 4224.0,
+        "units": "millions USD"
+      },
+      {
+        "fiscal_year": "2024",
+        "opex": 11329.0,
+        "operating_income": 32972.0,
+        "units": "millions USD"
+      },
+      {
+        "fiscal_year": "2025",
+        "opex": 16405.0,
+        "operating_income": 81453.0,
+        "units": "millions USD"
+      }
     ],
     "expected_computed_values": [
-      { "fiscal_year": "2023", "efficiency_ratio": 2.64 },
-      { "fiscal_year": "2024", "efficiency_ratio": 0.344 },
-      { "fiscal_year": "2025", "efficiency_ratio": 0.201 }
+      {
+        "fiscal_year": "2023",
+        "efficiency_ratio": 2.64
+      },
+      {
+        "fiscal_year": "2024",
+        "efficiency_ratio": 0.344
+      },
+      {
+        "fiscal_year": "2025",
+        "efficiency_ratio": 0.201
+      }
     ],
     "expected_citations": [
-      { "report": "FY25_10K", "year": "2025", "page": 52, "section": "Consolidated Statements of Income" }
+      {
+        "report": "FY25_10K",
+        "year": "2025",
+        "page": 52,
+        "section": "Consolidated Statements of Income"
+      }
     ],
-    "expected_tools": ["DataRetrieval", "TableExtractor", "Calculator"],
+      "relevant_docs": [
+      {
+        "year": "2025",
+        "docs": {
+          "FY25_10K": 2,
+          "FY25Q1_10Q": 1,
+          "FY25Q2_10Q": 1,
+          "FY25Q3_10Q": 1,
+          "FY25Q4_PR": 1
+        }
+      },
+      {
+        "year": "2024",
+        "docs": {
+          "FY24_10K": 1,
+          "FY24Q1_10Q": 1,
+          "FY24Q2_10Q": 1,
+          "FY24Q3_10Q": 1,
+          "FY24Q4_10Q": 1
+        }
+      },
+      {
+        "year": "2023",
+        "docs": {
+          "FY23_10K": 1
+        }
+      }
+    ],
+    "expected_tools": [
+      "DataRetrieval",
+      "TableExtractor",
+      "Calculator"
+    ],
     "expected_tools_count": 3
   }
 ]
