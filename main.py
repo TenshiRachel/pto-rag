@@ -15,6 +15,7 @@ from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
 from utilities.json import extract_json_and_prose, strip_json_fences
 from utilities.timing import TimingCallback
+from utilities.retrieval import RetrievalConfig
 import pandas as pd
 
 
@@ -83,9 +84,24 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
     """
 
 
-def create_agent(faiss_store):
+def create_agent(faiss_store, retriever_config):
     # Create Tools
-    retriever_tool = RetrieverTool(faiss_store=faiss_store, top_k=12).as_tool()
+    print("=== RETRIEVAL CONFIG ===")
+    print("output:", retriever_config.output)
+    print("use_cache:", retriever_config.use_cache)
+    print("use_dynamic_k:", retriever_config.use_dynamic_k)
+    print("use_rerank:", retriever_config.use_rerank)
+    print("========================")
+    
+    retriever_tool = RetrieverTool(
+        faiss_store=faiss_store,
+        default_k=12,
+        cache=retriever_config.cache if retriever_config.use_cache else None,
+        use_dynamic_k=retriever_config.use_dynamic_k,  # dynamic-K toggled separately
+        use_reranking=retriever_config.use_rerank,  # enable reranking
+        reranker_model="BAAI/bge-reranker-base",
+        relevance_threshold=0.8,
+    ).as_tool()
     comparison_tool = ComparisonTool().as_tool()
     calculator_tool = CalculatorTool().as_tool()
     tools = [retriever_tool, comparison_tool, calculator_tool]
@@ -144,6 +160,27 @@ def evaluate_agent_output(agent_output, question, ground_truth=""):
 
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Path to write JSON results (e.g. agent_results_baseline.json)"
+    )
+    parser.add_argument("--use_cache", action="store_true", help="Enable retrieval caching")
+    parser.add_argument("--use_dynamic_k", action="store_true", help="Enable dynamic-K retrieval")
+    parser.add_argument("--use_rerank", action="store_true", help="Enable re-ranking and adaptive retrieval")
+
+    args = parser.parse_args()
+    
+    retrievalConfig = RetrievalConfig(
+        output=args.output,
+        use_cache=args.use_cache,
+        use_dynamic_k=args.use_dynamic_k,
+        use_rerank=args.use_rerank
+    )
+    
     load_dotenv()
 
     openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -175,12 +212,6 @@ if __name__ == '__main__':
 
     EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small")  # Can be 'text-embedding-3-large'
     faiss_store = build_faiss_index(chunked_docs, EMBEDDING_MODEL)
-
-    bm25_index = BM25Index(
-        docs=[doc.page_content for doc in chunked_docs],
-        ids=[doc.metadata.get("chunk_id", i) for i, doc in enumerate(chunked_docs)]
-    )
-    bm25_index.save("bm25_index.pkl")
     
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:
@@ -196,7 +227,7 @@ if __name__ == '__main__':
     # system_prompt = create_system_message()
 
     # Agent created outside the loop instead of inside or else it will create new agent every iteration
-    agent_executor = create_agent(faiss_store)
+    agent_executor = create_agent(faiss_store, retrievalConfig)
 
     for i, question in enumerate(queries, 1):
         print(f"\n{'='*60}")
