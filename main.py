@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.agents import initialize_agent, AgentType
 from langchain_community.vectorstores import FAISS
 from pdf_ingestion_chunking import process_all, chunk_documents
-from build_indices import build_faiss_index, BM25Index
+from build_indices import build_faiss_index
 from agent_tools.calculator import CalculatorTool
 from agent_tools.comparison import ComparisonTool
 from agent_tools.retriever import RetrieverTool
@@ -152,11 +152,6 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool, u
     # embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     # faiss_store = build_faiss_index(chunked_docs, embeddings)
 
-    # bm25_index = BM25Index(
-    #     docs=[doc.page_content for doc in chunked_docs],
-    #     ids=[doc.metadata.get("chunk_id", i) for i, doc in enumerate(chunked_docs)]
-    # )
-    
     # Load local instead of build
     print("Open faiss index")
     faiss_store = FAISS.load_local(
@@ -164,9 +159,6 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool, u
         embeddings=OpenAIEmbeddings(model="text-embedding-3-small"),
         allow_dangerous_deserialization=True
     )
-
-    print("Open BM25 Index")
-    bm25_index = BM25Index.load("bm25_index.pkl")
 
     embed_end = time.time()
     index_build_time_s = embed_end - embed_start
@@ -194,7 +186,6 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool, u
 
         retr_tool = RetrieverTool(
             faiss_store=faiss_store,
-            bm25_store=bm25_index,
             default_k=12,
             cache=retrieval_cache if is_optimized else None,
             use_dynamic_k=use_dynamic_k,  # dynamic-K toggled separately

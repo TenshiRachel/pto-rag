@@ -55,7 +55,6 @@ class RetrieverTool:
     def __init__(
         self,
         faiss_store,
-        bm25_store,
         default_k: int = 12,
         cache: Optional[Dict[str, List[Document]]] = None,
         use_dynamic_k: bool = False,
@@ -67,8 +66,6 @@ class RetrieverTool:
         relevance_threshold: float = 0.9,
     ):
         self.faiss_store = faiss_store
-        self.bm25_store = bm25_store
-        self.id_to_doc = {doc.metadata["chunk_id"]: doc for doc in faiss_store.docstore._dict.values()}
         self.default_k = default_k
         self.cache = cache
         self.use_dynamic_k = use_dynamic_k
@@ -224,8 +221,7 @@ class RetrieverTool:
         self.last_adaptive_expanded = False
         self.last_scores = []
 
-        # 3. Hybrid Retrieval: FAISS + BM25
-        # docs = self._retrieve_from_faiss_and_bm25(query, target_k)
+        # 3. FAISS retrieval
         docs = self.faiss_store.similarity_search(query, k=target_k)
 
         # Metadata filter
@@ -285,33 +281,6 @@ class RetrieverTool:
             self.cache[query] = final_docs
 
         return final_docs
-
-    def _retrieve_from_faiss_and_bm25(self, query: str, target_k: int):
-        faiss_docs = self.faiss_store.similarity_search(query, k=target_k)
-
-        bm25_docs = []
-        if self.bm25_store is not None:
-            bm25_results = self.bm25_store.search(query, top_k=target_k)
-
-            # Convert BM25 IDs to documents
-            bm25_docs = []
-            for chunk_id, score in bm25_results:
-                doc = self.id_to_doc.get(chunk_id)
-                if doc is not None:
-                    bm25_docs.append(doc)
-
-        # Combine (concatenate, dedupe, preserve order)
-        docs = faiss_docs + bm25_docs
-        seen = set()
-        unique_docs = []
-        for d in docs:
-            cid = d.metadata.get("chunk_id")
-            if cid not in seen:
-                seen.add(cid)
-                unique_docs.append(d)
-
-        docs = unique_docs
-        return docs
     
 
     def _rerank_documents(self, query: str, docs: List[Document]) -> List[Document]:
@@ -373,7 +342,6 @@ class RetrieverTool:
         self.last_adaptive_expanded = True
         
         # Retrieve with max_k and rerank to get as many docs as possible
-        # expanded_docs = self._retrieve_from_faiss_and_bm25(query, target_k)
         expanded_docs = self.faiss_store.similarity_search(query, k=self.search_k)
         # for d in expanded_docs:
         #     print(d.metadata.get("report"), d.metadata.get("page"))
