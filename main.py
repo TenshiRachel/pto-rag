@@ -19,37 +19,6 @@ from utilities.retrieval import RetrievalConfig
 import pandas as pd
 
 
-# def create_system_message(question):
-#     return f"""
-#         You are a financial analyst agent that can use tools.
-
-#         Use the retriever tool when you need to fetch financial data. 
-#         Use the comparison tool when you need to compute YoY or QoQ comparisons.
-#         Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex ÷ Operating Income, Gross Margin %, Net Margin).
-
-#         You can only call any tools ONCE.
-
-#         Once done, return
-#         1. The **final structured JSON output** in this format:
-#         2. **Prose explanation**, converting the JSON output into a formatted table
-
-#         {{
-#         "query": "...",
-#         "data_values": [...],
-#         "computed_values": [...],
-#         "citations": [{{"report": "...", "page": ..., "section": "..."}}],
-#         "tools": ["<list the tools you actually used>"],
-#         "tools_count": <total number of tools used>
-#         }}
-
-#         Guidelines:
-#         - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.
-#         - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.
-#         - Always include every period in `computed_values`, even if the change value is null.
-
-#         Now, handle this query:
-#         {question}
-#     """
 
 def create_system_message(question):
     return f"""
@@ -156,16 +125,18 @@ def create_agent(faiss_store, retriever_config):
     print("use_dynamic_k:", retriever_config.use_dynamic_k)
     print("use_rerank:", retriever_config.use_rerank)
     print("========================")
-    
-    retriever_tool = RetrieverTool(
+
+    retriever = RetrieverTool(
         faiss_store=faiss_store,
-        default_k=13,
-        cache=retriever_config.cache if retriever_config.use_cache else None,
-        use_dynamic_k=retriever_config.use_dynamic_k,  # dynamic-K toggled separately
-        use_reranking=retriever_config.use_rerank,  # enable reranking
+        default_k=12,
+        cache=retriever_config.cache if getattr(retriever_config, "use_cache", False) else None,
+        use_dynamic_k=retriever_config.use_dynamic_k,
+        use_reranking=retriever_config.use_rerank,
         reranker_model="BAAI/bge-reranker-base",
         relevance_threshold=0.8,
-    ).as_tool()
+    )
+
+    retriever_tool = retriever.as_tool()
     comparison_tool = ComparisonTool().as_tool()
     calculator_tool = CalculatorTool().as_tool()
     tools = [retriever_tool, comparison_tool, calculator_tool]
@@ -200,7 +171,7 @@ def create_agent(faiss_store, retriever_config):
         max_iterations=6,  # 6 for now
     )
 
-    return agent_executor
+    return agent_executor, retriever
 
 
 def evaluate_agent_output(agent_output, question, ground_truth=""):
@@ -222,34 +193,179 @@ def evaluate_agent_output(agent_output, question, ground_truth=""):
     except json.JSONDecodeError:
         return {"error": "Invalid JSON returned by judge", "raw": raw_text}
 
+def normalize_relevant_groups(relevant_groups):
+    if not relevant_groups:
+        return {}
 
-if __name__ == '__main__':
+    # dict case: either group->dict or single dict of report->weight
+    if isinstance(relevant_groups, dict):
+        if all(isinstance(v, dict) for v in relevant_groups.values()):
+            out = {}
+            for g, d in relevant_groups.items():
+                sub = {}
+                for rep, w in (d or {}).items():
+                    try:
+                        sub[str(rep)] = int(w)
+                    except Exception:
+                        sub[str(rep)] = 1
+                out[str(g)] = sub
+            return out
+        else:
+            sub = {}
+            for rep, w in relevant_groups.items():
+                try:
+                    sub[str(rep)] = int(w)
+                except Exception:
+                    sub[str(rep)] = 1
+            return {"__all__": sub}
+
+    # list case
+    if isinstance(relevant_groups, list):
+        # simple list of reports -> single group with weight 2
+        if all(isinstance(x, str) for x in relevant_groups):
+            return {"__all__": {rep: 2 for rep in relevant_groups}}
+
+        out = {}
+        for el in relevant_groups:
+            if not isinstance(el, dict):
+                continue
+
+            # NEW: year-grouped shape: {"year": "...", "docs": {...}}
+            if "year" in el and "docs" in el and isinstance(el["docs"], dict):
+                gname = str(el["year"])
+                out[gname] = {}
+                for rep, w in el["docs"].items():
+                    try:
+                        out[gname][str(rep)] = int(w)
+                    except Exception:
+                        out[gname][str(rep)] = 1
+                continue
+
+            # existing: explicit {"report","weight","group"}
+            rep = el.get("report")
+            if isinstance(rep, str):
+                group = el.get("group", "__all__")
+                w = el.get("weight", el.get("w", 2))
+                try:
+                    w = int(w)
+                except Exception:
+                    w = 2
+                out.setdefault(str(group), {})[rep] = w
+                continue
+
+            # mapping dict like {"FY25_10K": 2, ...} -> fold into single group
+            merged = {
+                k: (int(v) if isinstance(v, (int, float, str)) else 1)
+                for k, v in el.items()
+                if isinstance(k, str)
+            }
+            if merged:
+                out.setdefault("__all__", {}).update(merged)
+
+        return out
+
+    return {}
+
+
+def compute_retrieval_metrics(ground_truth_entry, retrieved_pairs):
+    # Extract just report ids
+    retrieved_reports = [r[0] for r in retrieved_pairs if r and r[0]]
+    denom = max(len(retrieved_reports), 1)
+
+    relevant_groups_raw = ground_truth_entry.get("relevant_docs")
+    group_docs = normalize_relevant_groups(relevant_groups_raw)
+
+    if group_docs:
+        MAX_W = 2  # full relevance
+
+        # --- precision@K (binary) ---
+        hits = 0
+        for rep in retrieved_reports:
+            if any(rep in docmap for docmap in group_docs.values()):
+                hits += 1
+        precision_at_k = hits / denom
+
+        # --- recall@K (binary, group coverage) ---
+        covered = 0
+        for _, docmap in group_docs.items():
+            if any(rep in docmap for rep in retrieved_reports):
+                covered += 1
+        recall_at_k = covered / max(len(group_docs), 1)
+
+        # --- graded precision@K ---
+        graded_hits = 0.0
+        for rep in retrieved_reports:
+            best = 0
+            for docmap in group_docs.values():
+                best = max(best, docmap.get(rep, 0))
+            graded_hits += 1.0 if best == 2 else (0.5 if best == 1 else 0.0)
+        graded_precision_at_k = graded_hits / denom
+
+        # --- graded recall@K ---
+        graded_recall_sum = 0.0
+        for _, docmap in group_docs.items():
+            best_w = 0
+            for rep in retrieved_reports:
+                best_w = max(best_w, docmap.get(rep, 0))
+            graded_recall_sum += (best_w / MAX_W)
+        graded_recall_at_k = graded_recall_sum / max(len(group_docs), 1)
+
+    else:
+        # Fallback: citation-level metrics when no grouped relevance is provided
+        gt_citations = ground_truth_entry.get("expected_citations", [])
+        gt_set = {
+            (c.get("report"), c.get("page"))
+            for c in gt_citations
+            if c.get("report") is not None and c.get("page") is not None
+        }
+        retrieved_set = {
+            (r[0], r[1])
+            for r in retrieved_pairs
+            if r[0] is not None and r[1] is not None
+        }
+        inter = gt_set.intersection(retrieved_set)
+
+        precision_at_k = (len(inter) / len(retrieved_set)) if retrieved_set else 0.0
+        recall_at_k = (len(inter) / len(gt_set)) if gt_set else 0.0
+        graded_precision_at_k = precision_at_k
+        graded_recall_at_k = recall_at_k
+
+    return {
+        "precision_at_k": precision_at_k,
+        "recall_at_k": recall_at_k,
+        "graded_precision_at_k": graded_precision_at_k,
+        "graded_recall_at_k": graded_recall_at_k,
+    }
+
+
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",
         required=True,
-        help="Path to write JSON results (e.g. agent_results_baseline.json)"
+        help="Path to write JSON results (e.g. agent_results_baseline.json)",
     )
     parser.add_argument("--use_cache", action="store_true", help="Enable retrieval caching")
     parser.add_argument("--use_dynamic_k", action="store_true", help="Enable dynamic-K retrieval")
     parser.add_argument("--use_rerank", action="store_true", help="Enable re-ranking and adaptive retrieval")
 
     args = parser.parse_args()
-    
+
     retrievalConfig = RetrievalConfig(
         output=args.output,
         use_cache=args.use_cache,
         use_dynamic_k=args.use_dynamic_k,
         use_rerank=args.use_rerank
     )
-    
+
     load_dotenv()
 
     openai_api_key = os.getenv("OPENAI_API_KEY")
 
-    all_docs = asyncio.run(process_all_async('data/'))
+    # Async ingestion & chunking evaluation
+    all_docs = asyncio.run(process_all_async("data/"))
     chunking_evaluator = ChunkingEvaluator(all_docs)
 
     results = chunking_evaluator.evaluate_chunking_strategy(
@@ -276,7 +392,7 @@ if __name__ == '__main__':
 
     EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small")  # Can be 'text-embedding-3-large'
     faiss_store = build_faiss_index(chunked_docs, EMBEDDING_MODEL)
-    
+
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:
         test_questions = json.load(f)
@@ -288,10 +404,9 @@ if __name__ == '__main__':
     ground_truth_map = {item['query']: item for item in test_questions}
 
     all_results = []
-    # system_prompt = create_system_message()
 
-    # Agent created outside the loop instead of inside or else it will create new agent every iteration
-    agent_executor = create_agent(faiss_store, retrievalConfig)
+    # Agent created outside the loop instead of inside
+    agent_executor, retriever_tool_instance = create_agent(faiss_store, retrievalConfig)
 
     for i, question in enumerate(queries, 1):
         print(f"\n{'='*60}")
@@ -305,18 +420,17 @@ if __name__ == '__main__':
         start = time.perf_counter()
         prof.start()
 
+        # System prompt includes the question
         prompt = create_system_message(question)
 
-        response = agent_executor.invoke(
-            {"input": create_system_message(question)},
-            config={"callbacks": [timing_callback]}
-        )
+        response = agent_executor.invoke({"input": prompt}, config={"callbacks": [timing_callback]})
         timing_callback.finalize()
 
         prof.stop()
         elapsed = time.perf_counter() - start
 
         # Save individual profile files
+        os.makedirs("./results_log", exist_ok=True)
         profile_session_path = f"./results_log/03_Agent_q{i}.pyisession"
         profile_html_path = f"./results_log/03_Agent_q{i}.html"
 
@@ -329,9 +443,52 @@ if __name__ == '__main__':
             f.write(prof.output_html())
 
         # Extract results
-        # data, prose = extract_json_and_prose(response['output'])
         output_text = response.get("output", "")
         data, prose = extract_json_and_prose(output_text)
+
+        # Ground truth for this question
+        ground_truth_entry = ground_truth_map.get(question, {})
+        ground_truth_text = json.dumps(ground_truth_entry, indent=2)
+
+        # --- Retrieval diagnostics & metrics (from RetrieverTool) ---
+        retrieved_pairs = list(
+            getattr(retriever_tool_instance, "last_pairs", [])
+        )
+        k_used = getattr(retriever_tool_instance, "last_k_used", None)
+        initial_k = getattr(
+            retriever_tool_instance, "last_initial_k", None
+        )
+        adaptive_expanded = getattr(
+            retriever_tool_instance, "last_adaptive_expanded", False
+        )
+        reranked = getattr(
+            retriever_tool_instance, "last_reranked", False
+        )
+        rerank_scores = getattr(
+            retriever_tool_instance, "last_scores", []
+        )
+        last_query = getattr(
+            retriever_tool_instance, "last_query", None
+        )
+        last_documents = getattr(
+            retriever_tool_instance, "last_documents", []
+        )
+
+        # Build a JSON-serialisable view of retrieved chunks
+        retrieved_chunks = [
+            {
+                "report": doc.metadata.get("report")
+                or doc.metadata.get("source"),
+                "page": doc.metadata.get("page"),
+                "content": doc.page_content,
+            }
+            for doc in last_documents
+        ]
+
+        # Compute graded / binary precision & recall
+        retrieval_metrics = compute_retrieval_metrics(
+            ground_truth_entry, retrieved_pairs
+        )
 
         # Store result
         result = {
@@ -344,15 +501,29 @@ if __name__ == '__main__':
             "elapsed_time": elapsed,
             "callback_timing": timing_callback.get_summary(),
             "profile_session_path": profile_session_path,
-            "profile_html_path": profile_html_path
+            "profile_html_path": profile_html_path,
+            # retrieval diagnostics
+            "retriever_query": last_query,
+            "retrieved_pairs": retrieved_pairs,
+            "retrieved_chunks": retrieved_chunks,
+            "k_used": k_used,
+            "initial_k": initial_k,
+            "adaptive_expanded": adaptive_expanded,
+            "reranked": reranked,
+            "rerank_scores": rerank_scores,
+            # retrieval metrics
+            "precision_at_k": retrieval_metrics["precision_at_k"],
+            "recall_at_k": retrieval_metrics["recall_at_k"],
+            "graded_precision_at_k": retrieval_metrics[
+                "graded_precision_at_k"
+            ],
+            "graded_recall_at_k": retrieval_metrics[
+                "graded_recall_at_k"
+            ],
         }
         all_results.append(result)
 
-        raw_output = result['raw_output']
-        ground_truth_entry = ground_truth_map.get(question, {})
-
-        # Pass JSON string version into evaluator for readability
-        ground_truth_text = json.dumps(ground_truth_entry, indent=2)
+        raw_output = result["raw_output"]
 
         eval_result = evaluate_agent_output(
             raw_output,
@@ -360,7 +531,6 @@ if __name__ == '__main__':
             ground_truth=ground_truth_text
         )
 
-        # Optional: store it in the output
         result["ground_truth"] = ground_truth_entry
         result["evaluation"] = eval_result
 
@@ -381,4 +551,8 @@ if __name__ == '__main__':
     print(f"Average time per question: {avg_time:.2f}s")
 
     df = pd.read_json("agent_results_with_eval.json")
-    df["final_score"] = df["evaluation"].apply(lambda x: x.get("final_score", None))
+    df["final_score"] = df["evaluation"].apply(
+        lambda x: x.get("final_score", None)
+        if isinstance(x, dict)
+        else None
+    )
