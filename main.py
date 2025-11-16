@@ -19,19 +19,73 @@ from utilities.retrieval import RetrievalConfig
 import pandas as pd
 
 
+# def create_system_message(question):
+#     return f"""
+#         You are a financial analyst agent that can use tools.
+
+#         Use the retriever tool when you need to fetch financial data. 
+#         Use the comparison tool when you need to compute YoY or QoQ comparisons.
+#         Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex ÷ Operating Income, Gross Margin %, Net Margin).
+
+#         You can only call any tools ONCE.
+
+#         Once done, return
+#         1. The **final structured JSON output** in this format:
+#         2. **Prose explanation**, converting the JSON output into a formatted table
+
+#         {{
+#         "query": "...",
+#         "data_values": [...],
+#         "computed_values": [...],
+#         "citations": [{{"report": "...", "page": ..., "section": "..."}}],
+#         "tools": ["<list the tools you actually used>"],
+#         "tools_count": <total number of tools used>
+#         }}
+
+#         Guidelines:
+#         - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.
+#         - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.
+#         - Always include every period in `computed_values`, even if the change value is null.
+
+#         Now, handle this query:
+#         {question}
+#     """
+
 def create_system_message(question):
     return f"""
-        You are a financial analyst agent that can use tools.
+        You are a financial analyst agent that must reason step-by-step BEFORE using any tools.
 
-        Use the retriever tool when you need to fetch financial data. 
-        Use the comparison tool when you need to compute YoY or QoQ comparisons.
-        Use the calculator tool to compute or derive financial ratios or custom metrics (e.g., Opex ÷ Operating Income, Gross Margin %, Net Margin).
+        Use Chain-of-Thought planning:
+        1. Understand what specific financial data is required
+        2. From the retrieved chunks, identify which fiscal periods and report types are available
+        3. List the exact fiscal periods needed for the question (only using periods you have seen in retrieved metadata)
+        4. Decide which tools are needed and in what order
+        5. Run the tools
+        6. Verify retrieved numbers and periods match the requested ones
 
-        You can only call any tools ONCE.
+        Period selection rules:
+        - Your knowledge of time periods is limited to what appears in the retrieved chunks.
+        - Use report names and metadata (e.g. FY26Q2_10Q, FY25_10K, FY25Q4_QuarterlyPresentation) to infer fiscal year and quarter.
+        - When the question says "latest quarter" or "most recent quarter":
+          Choose the quarter with the highest fiscal year and quarter among reports that are 10-Qs or QuarterlyPresentations.
+        - When the question says "latest fiscal year" or "most recent year":
+          Choose the highest fiscal year among 10-K reports (and matching annual presentations if needed).
+        - Never use a fiscal year or quarter that does NOT appear in the retrieved report names or metadata.
+        - If a requested period is not present in the retrieved data, state this explicitly instead of guessing.
+
+        Rules:
+        - Never guess numbers or fiscal periods
+        - All figures must be retrieved using the retriever tool
+        - Provide citations for every value used
+        - Use values from **GAAP** "Financial Summary" tables. Avoid Non-GAAP reconciliation tables unless the question explicitly asks for Non-GAAP metrics.
+        - Ignore and do NOT extract values from any section titled "Reconciliation of Non-GAAP to GAAP Financial Measures"
+
+        Use tools at most ONCE per tool type.
 
         Once done, return
         1. The **final structured JSON output** in this format:
-        2. **Prose explanation**, converting the JSON output into a formatted table
+        2. **Prose explanation**, converting the JSON output into a formatted table INSIDE the JSON fields only
+        3. **NO** markdown, code fences, headings, backslashes, lists, tables, LaTeX, or narrative outside the JSON object
 
         {{
         "query": "...",
@@ -39,7 +93,8 @@ def create_system_message(question):
         "computed_values": [...],
         "citations": [{{"report": "...", "page": ..., "section": "..."}}],
         "tools": ["<list the tools you actually used>"],
-        "tools_count": <total number of tools used>
+        "tools_count": <total number of tools used>,
+        "explanation": "<put formatted prose here, NOT outside JSON>"
         }}
 
         Guidelines:
@@ -47,28 +102,40 @@ def create_system_message(question):
         - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.
         - Always include every period in `computed_values`, even if the change value is null.
 
-        Now, handle this query:
+        Now answer:
         {question}
-    """
-
+        """
 
 def build_eval_prompt(agent_output, question, ground_truth=""):
     return f"""
     You are an expert financial analyst evaluator.
 
-    The `ground_truth` provided below already contains the correct and most recent data, 
-    Do NOT attempt to infer, update, or verify it externally. 
-    Your task is only to compare the agent's output to the provided ground truth and grade based on consistency.
+    The `ground_truth` provided below already contains the correct and most recent data.
+    Do NOT attempt to infer, update, or verify it externally.
+    Your task is only to compare the agent's output to the provided ground truth 
+    and score the evaluation criteria based on consistency.
 
-    Please assess the following aspects of the agent output, and respond strictly in JSON format:
+    Scoring Rules:
+    - All metric scores are percentages from 0 to 100.
+    - 100% = perfectly correct, compliant, or aligned
+    - 0% = completely incorrect or missing
+
+    You MUST respond strictly in JSON format:
     {{
-      "accuracy_score": integer,  # Match between agent data/computed values and ground truth
-      "format_score": integer,    # JSON structure, completeness, and prose clarity
-      "tool_use_score": integer,  # Appropriateness and correctness of tool usage vs expected tools
-      "citation_score": integer,  # Whether citations correspond to expected ground truth reports
-      "final_score": integer,     # Overall combined score
-      "comments": "Brief explanation and key issues"
+      "accuracy_pct": number,     # % match between agent values and ground truth (content correctness)
+      "format_pct": number,       # % adherence to expected output format and structure
+      "tool_use_pct": number,     # % appropriateness and correctness of tool usage vs expected tools
+      "citation_pct": number,     # % of claims properly supported by cited ground truth
+      "final_pct": number,        # weighted or averaged overall % score
+      "comments": "Brief explanation and key issues only"
     }}
+
+    IMPORTANT:
+    - Evaluate ONLY relative to the ground truth below.
+    - Keep comments concise.
+    - Do NOT provide any reasoning or explanation outside the JSON.
+    - JSON must be valid and parseable.
+    - Do NOT use markdown or code fences.
 
     Agent Response:
     {agent_output}
@@ -78,9 +145,6 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
 
     Ground Truth:
     {ground_truth}
-
-    Only evaluate **relative to this ground truth**. 
-    Provide a short reasoning and then output a valid JSON block.
     """
 
 
@@ -95,7 +159,7 @@ def create_agent(faiss_store, retriever_config):
     
     retriever_tool = RetrieverTool(
         faiss_store=faiss_store,
-        default_k=12,
+        default_k=13,
         cache=retriever_config.cache if retriever_config.use_cache else None,
         use_dynamic_k=retriever_config.use_dynamic_k,  # dynamic-K toggled separately
         use_reranking=retriever_config.use_rerank,  # enable reranking

@@ -1,7 +1,26 @@
 import re
 import json
+import math
 from langchain.tools import StructuredTool
 
+# Canonical variable alias mapping — fixes SEC naming mismatches
+VARIABLE_ALIASES = {
+    "operating_income": [
+        "operating_income", "operating_income_(loss)", "operating_income_loss"
+    ],
+    "operating_expenses": [
+        "total_operating_expenses", "operating_expenses", "opex"
+    ],
+    "gross_profit": ["gross_profit"],
+    "revenue": ["revenue", "total_revenue"],
+    "net_income": ["net_income"],
+    "r_and_d": [
+        "research_and_development_expenses",
+        "research_and_development",
+        "research_development",
+        "r&d", "rd"
+    ]
+}
 
 FINANCIAL_FORMULAS = {
     "operating_efficiency_ratio": {
@@ -10,21 +29,21 @@ FINANCIAL_FORMULAS = {
     },
     "gross_margin": {
         "formula": "(gross_profit / revenue) * 100",
-        "description": "Percentage of revenue remaining after cost of goods sold (COGS)."
+        "description": "Percentage of revenue remaining after cost of goods sold."
     },
     "net_margin": {
         "formula": "(net_income / revenue) * 100",
-        "description": "Percentage of revenue retained as net income after expenses."
+        "description": "Net income as % of revenue."
     },
     "r&d_to_revenue": {
         "formula": "(r_and_d / revenue) * 100",
-        "description": "R&D expenses as a percentage of revenue."
+        "description": "R&D expenses as % of revenue."
     },
 }
 
 
 def resolve_formula_from_query(query: str):
-    """Tries to resolve a natural language query to a known formula."""
+    """Infer a known formula from query text."""
     q = query.lower()
     for key, entry in FINANCIAL_FORMULAS.items():
         if key.replace("_", " ") in q:
@@ -34,69 +53,88 @@ def resolve_formula_from_query(query: str):
     return None
 
 
-# --- Calculator Tool ---
 class CalculatorTool:
-    """Dynamic Calculator Tool for RAG agents to compute arbitrary financial metrics."""
+    """Financial calculator with period enforcement and alias resolution."""
 
     @staticmethod
     def forward(input_str: str) -> str:
-        """
-        Accepts JSON input like:
-        {
-          "query": "Calculate Operating Efficiency Ratio for the last 3 fiscal years",
-          "data": [...],
-          "period_key": "fiscal_year",
-          "formula": "opex / operating_income"
-        }
-        Returns: JSON string of computed results.
-        """
-        # Clean formatting
-        input_str = re.sub(r"^```(?:json)?|```$", "", input_str.strip(), flags=re.IGNORECASE).strip()
+        """Executes financial metric computations from structured JSON input."""
+
+        # Strip markdown formatting if present
+        input_str = re.sub(r"^```(?:json)?|```$", "", input_str.strip(),
+                           flags=re.IGNORECASE).strip()
 
         try:
             params = json.loads(input_str)
         except Exception as e:
             return json.dumps({"error": f"Invalid input JSON: {str(e)}"})
 
+        # Allow multiple input styles
         query = params.get("query", "").lower()
+        if not query:
+            query = params.get("metric_key", "").lower()
+
         data = params.get("data", [])
         period_key = params.get("period_key", "fiscal_year")
-        formula = params.get("formula")
 
+        # Fix huge agent error: missing conversion dict → list
         if isinstance(data, dict):
             data = [{period_key: k, **v} for k, v in data.items()]
 
         if not isinstance(data, list):
-            return json.dumps({"error": "Expected 'data' to be a list or dict of period:value mappings."})
+            return json.dumps({"error": "'data' must be a list of records."})
 
-        # If no formula is provided, attempt to infer it from the query
+        if not data:
+            return json.dumps({"error": "Empty data list provided."})
+
+        if period_key not in data[0]:
+            return json.dumps({"error": f"Missing required period_key '{period_key}' in data."})
+
+        # Formula detection priority
+        formula = params.get("formula")
+        if not formula:
+            formula = params.get("calculation")  # backward compatibility
         if not formula:
             formula = resolve_formula_from_query(query)
         if not formula:
-            return json.dumps({"error": "No formula found or inferred from query."})
+            return json.dumps({"error": "No formula provided or inferred from query."})
 
-        # Identify variables referenced in the formula
         variables = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", formula)
         results = []
 
         for record in data:
-            # Normalize keys
+            # Normalize SEC fields
             normalized = {
-                re.sub(r'[\s\-]+', '_', k.strip().lower()): v
+                re.sub(r'[\s\-()]+', '_', k.strip().lower()): v
                 for k, v in record.items()
             }
 
-            local_vars = {var: normalized.get(var) for var in variables}
+            # Alias mapping for canonical financial names
+            for canonical, aliases in VARIABLE_ALIASES.items():
+                for alias in aliases:
+                    if alias in normalized:
+                        normalized[canonical] = normalized[alias]
 
-            if None in local_vars.values():
+            local_vars = {var: normalized.get(var) for var in variables}
+            missing = [k for k, v in local_vars.items() if v is None]
+
+            if missing:
                 results.append({
                     period_key: record.get(period_key),
-                    "error": f"Missing data for: {', '.join([k for k,v in local_vars.items() if v is None])}"
+                    "error": f"Missing data for: {', '.join(missing)}"
                 })
                 continue
 
             try:
-                value = eval(formula, {"__builtins__": {}}, local_vars)
+                value = eval(
+                    formula,
+                    {"__builtins__": {}},
+                    {
+                        **local_vars,
+                        **{k: getattr(math, k) for k in dir(math)
+                           if not k.startswith("_")}
+                    }
+                )
             except Exception as e:
                 results.append({
                     period_key: record.get(period_key),
@@ -104,25 +142,28 @@ class CalculatorTool:
                 })
                 continue
 
-            results.append({
+            result_entry = {
                 period_key: record[period_key],
                 "computed_value": round(value, 4),
-                "formula_used": formula,
-                "working": f"{formula.replace('/', ' ÷ ')} = {round(value, 4)}"
-            })
+                "formula_used": formula
+            }
+
+            # Preserve any metadata for citations
+            for tag in ["unit", "metadata", "source"]:
+                if tag in record:
+                    result_entry[tag] = record[tag]
+
+            results.append(result_entry)
 
         return json.dumps(results, indent=2)
 
-
     def as_tool(self):
-        """Expose this as a LangChain-compatible tool."""
         return StructuredTool.from_function(
             func=self.forward,
             name="calculator_tool",
             description=(
-                "Computes arbitrary financial ratios or derived metrics from structured data. "
-                "Accepts a JSON input with fields 'query', 'data', 'period_key', and optionally 'formula'. "
-                "Understands user queries like 'Calculate operating efficiency ratio' or custom formulas like "
-                "'(gross_profit - opex) / revenue'."
+                "Computes financial ratios from structured data. "
+                "Accepts keys 'formula', 'calculation', 'query', or 'metric_key'. "
+                "Normalizes SEC financial field names for reliability."
             ),
         )
