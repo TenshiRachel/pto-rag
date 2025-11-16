@@ -8,6 +8,34 @@ from langchain.tools import StructuredTool
 
 from sentence_transformers import CrossEncoder
 
+def infer_period_type(report: str) -> str:
+    """
+    Infer period type from a report name.
+    Returns "year", "quarter", or "unknown".
+    """
+    if not report:
+        return "unknown"
+
+    r = report.lower()
+
+    # Detect quarter-like patterns ANYWHERE (case-insensitive)
+    # This matches: q1, q2, q3, q4, fy25q3, 2024q1, q3_2022, q1-fy23, etc.
+    if re.search(r"q[1-4]", r) or "quarter" in r:
+        return "quarter"
+
+    # Detect year-level patterns:
+    # FY23, FY2023, 2021, 2022, Annual
+    if (
+        re.search(r"fy\d{2}(?!\d)", r)          # FY23, FY24
+        or re.search(r"fy20\d{2}", r)     # FY2023
+        or re.search(r"\b20\d{2}\b", r)       # 2021, 2022
+        or "annual" in r
+        or "year" in r
+    ):
+        return "year"
+
+    return "unknown"
+
 class RetrieverTool:
     """
     A FAISS-backed retriever with optional caching and dynamic-K.
@@ -32,10 +60,11 @@ class RetrieverTool:
         cache: Optional[Dict[str, List[Document]]] = None,
         use_dynamic_k: bool = False,
         min_k: int = 1,
-        max_k: int = 30,
+        max_k: int = 15,
+        search_k: int = 50,
         use_reranking: bool = False,
         reranker_model: str = "BAAI/bge-reranker-base",
-        relevance_threshold: float = 0.5,
+        relevance_threshold: float = 0.9,
     ):
         self.faiss_store = faiss_store
         self.bm25_store = bm25_store
@@ -45,6 +74,7 @@ class RetrieverTool:
         self.use_dynamic_k = use_dynamic_k
         self.min_k = min_k
         self.max_k = max_k
+        self.search_k = search_k
         self.use_reranking = use_reranking
         self.relevance_threshold = relevance_threshold
 
@@ -112,6 +142,42 @@ class RetrieverTool:
                 deduped.append(p)
         return deduped
 
+
+    def _filter_by_period(self, query: str, docs: List[Document]) -> List[Document]:
+        """
+        Filter quarters vs years
+        """
+        if not docs:
+            return docs
+
+        ql = query.lower()
+
+        want_year = (
+            "fiscal year" in ql
+            or "fiscal years" in ql
+            or ("last" in ql and "year" in ql)
+            or "annual" in ql
+        )
+        want_quarter = "quarter" in ql or "quarters" in ql
+
+        # no filtering if no specific period inferred
+        if not (want_year or want_quarter):
+            return docs
+
+        filtered: List[Document] = []
+        for d in docs:
+            report = (d.metadata or {}).get("report", "") or ""
+            period_type = infer_period_type(report)
+
+            if want_year and period_type == "year":
+                filtered.append(d)
+            elif want_quarter and period_type == "quarter":
+                filtered.append(d)
+        
+        # apply filter if there is data
+        return filtered or docs
+    
+
     # ---------- main retrieval ----------
 
     def forward(self, query: str, k: Optional[int] = None) -> List[Document]:
@@ -159,7 +225,11 @@ class RetrieverTool:
         self.last_scores = []
 
         # 3. Hybrid Retrieval: FAISS + BM25
-        docs = self._retrieve_from_faiss_and_bm25(query, target_k)
+        # docs = self._retrieve_from_faiss_and_bm25(query, target_k)
+        docs = self.faiss_store.similarity_search(query, k=target_k)
+
+        # Metadata filter
+        docs = self._filter_by_period(query, docs)
 
         # 4. rerank if enabled
         if self.use_reranking and self.reranker is not None:
@@ -167,12 +237,38 @@ class RetrieverTool:
             self.last_reranked = True
             
             # 5. adaptively expand if dynamic_k enabled and results unsatisfactory
-            # Only expand if agent didn't explicitly specify k
-            if self.use_dynamic_k and k is None and target_k < self.max_k:
+            if self.use_dynamic_k and target_k < self.max_k:
                 docs = self._adaptive_retrieve(query, docs, target_k)
         
-        # 6. final top K (already sorted by relevance during reranking)
-        final_docs = docs[:target_k]
+        # 6. final docs - if adaptive expansion happened, scale quantity based on quality gap
+        if self.last_adaptive_expanded and self.last_scores:
+            # Calculate how far avg score is from threshold
+            top_k_scores = self.last_scores[:target_k]
+            avg_score = sum(top_k_scores) / len(top_k_scores) if top_k_scores else 0.0
+            
+            # Quality gap: how much below threshold we are (0.0 to 1.0)
+            quality_gap = max(0.0, self.relevance_threshold - avg_score)
+            
+            # Scale multiplier based on gap:
+            multiplier = 2 + (quality_gap / self.relevance_threshold) * 3
+            
+            # Calculate final_k based on multiplier
+            final_k = int(target_k * multiplier)
+
+            final_k = min(final_k, len(docs), self.max_k)  # Cap at available docs or max_k allowed
+            final_docs = docs[:final_k]
+        else:
+            # No expansion needed, return exactly target_k
+            final_docs = docs[:target_k]
+
+        final_docs = sorted(
+            final_docs,
+            key=lambda doc: (
+                doc.metadata.get("report", ""),
+                doc.metadata.get("page", 0)
+            ),
+            reverse=True
+        )
 
         # Update diagnostics
         self.last_hit = False
@@ -180,7 +276,7 @@ class RetrieverTool:
         self.last_k_used = len(final_docs)
         self.last_query = query
         self.last_documents = final_docs
-        
+
         # Log this retrieval with all metrics
         self._log_retrieval(query, from_cache=False, final_docs=final_docs)
 
@@ -238,7 +334,7 @@ class RetrieverTool:
             setattr(doc, '_rerank_score', score_float)
             scored_docs.append((doc, score_float))
         scored_docs.sort(key=lambda x: x[1], reverse=True)
-        
+
         # update and return scores (already converted to Python float)
         self.last_scores = [score for _, score in scored_docs]
         return [doc for doc, _ in scored_docs]
@@ -250,39 +346,44 @@ class RetrieverTool:
         target_k: int
     ) -> List[Document]:
         """
-        Adaptively retrieve more documents if initial results lack sufficient relevance.
+        Adaptively retrieve more documents to increase quantity when quality is lacking.
         Used when dynamic_k is enabled.
         
         Strategy:
-        - Check average relevance score of top results
-        - If below threshold and we haven't reached max_k, double k and retrieve more
-        - Rerank the expanded set
-        - Return sorted documents (caller will slice to top K)
+        - Keep expanding k until we reach max_k (always expand if avg < threshold)
+        - Goal: Get more documents to compensate for low average quality
+        - Return all sorted documents (caller decides how many to use)
         """
         if not initial_docs or not self.last_scores:
             return initial_docs
         
-        # average score of initial results
-        avg_score = sum(self.last_scores) / len(self.last_scores)
-
-        # if quality is good or already at max_k
-        if avg_score >= self.relevance_threshold or target_k >= self.max_k:
+        # Check avg score of top target_k documents
+        top_k_scores = self.last_scores[:target_k]
+        avg_score = sum(top_k_scores) / len(top_k_scores) if top_k_scores else 0.0
+        
+        # If quality is good enough, no need to expand
+        if avg_score >= self.relevance_threshold and len(top_k_scores) >= target_k:
             return initial_docs
         
-        # double k or cap at the max_k
-        expanded_k = min(target_k * 2, self.max_k)
-        
-        # if no expansion is needed (target already hit), use original docs
-        if expanded_k <= target_k:
+        # Quality is low - expand to max_k to get more documents
+        if target_k >= self.search_k:
+            # Already at max, can't expand more
             return initial_docs
         
-        # retrieve with expanded k and rerank
         self.last_adaptive_expanded = True
-        expanded_docs = self._retrieve_from_faiss_and_bm25(query, expanded_k)
-        expanded_docs = self._rerank_documents(query, expanded_docs)
         
-        # return ALL sorted documents
-        return expanded_docs
+        # Retrieve with max_k and rerank to get as many docs as possible
+        # expanded_docs = self._retrieve_from_faiss_and_bm25(query, target_k)
+        expanded_docs = self.faiss_store.similarity_search(query, k=self.search_k)
+        # for d in expanded_docs:
+        #     print(d.metadata.get("report"), d.metadata.get("page"))
+        
+        # Filter by metadata
+        expanded_docs = self._filter_by_period(query, expanded_docs)
+
+        docs = self._rerank_documents(query, expanded_docs)
+        
+        return docs
     
     def _log_retrieval(self, query: str, from_cache: bool, final_docs: List[Document]) -> None:
         """
@@ -383,6 +484,10 @@ class RetrieverTool:
         for p in parts:
             if p.lower().startswith("query="):
                 q_text = p[len("query="):].strip()
+                # Strip surrounding quotes if present (both single and double)
+                if (q_text.startswith('"') and q_text.endswith('"')) or \
+                   (q_text.startswith("'") and q_text.endswith("'")):
+                    q_text = q_text[1:-1]
             elif p.lower().startswith("k="):
                 try:
                     k_val = int(p[len("k="):].strip())

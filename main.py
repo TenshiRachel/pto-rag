@@ -137,7 +137,7 @@ def normalize_relevant_groups(relevant_groups):
     return {}
 
 
-def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
+def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool, use_rerank: bool):
     load_dotenv()
 
     # 1. ingestion / chunking timing
@@ -198,9 +198,9 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             default_k=12,
             cache=retrieval_cache if is_optimized else None,
             use_dynamic_k=use_dynamic_k,  # dynamic-K toggled separately
-            use_reranking=True,  # enable reranking in optimized mode
+            use_reranking=use_rerank,  # enable reranking
             reranker_model="BAAI/bge-reranker-base",
-            relevance_threshold=0.5,
+            relevance_threshold=0.8,
         )
 
         comp_tool = ComparisonTool()
@@ -221,13 +221,15 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
         timing_callback.register_cache_hit(first_hit)
 
         # measure "warm cache" speed separately WITHOUT affecting agent timing
+        """
         warm_cache_latency = None
         if use_cache:
             t0 = time.time()
             _ = retr_tool.forward(q)  # same query string again
             t1 = time.time()
             warm_cache_latency = (t1 - t0) * 1000.0  # ms
-
+        """
+        
         # --- ground truth relevant citations OR grouped relevance ---
         gt_entry = gt_items[idx - 1]
 
@@ -340,7 +342,7 @@ def run_benchmark(output_json_path: str, use_cache: bool, use_dynamic_k: bool):
             "elapsed_time": agent_end - agent_start,
             "callback_timing": timing_callback.get_summary(),
             "first_retrieve_cached": first_hit,
-            "warm_cache_retrieval_time_ms": warm_cache_latency,
+            # "warm_cache_retrieval_time_ms": warm_cache_latency,
 
             # system-level (repeated for convenience)
             # "ingest_time_s": ingest_time_s,
@@ -396,6 +398,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--use_cache", action="store_true", help="Enable retrieval caching")
     parser.add_argument("--use_dynamic_k", action="store_true", help="Enable dynamic-K retrieval")
+    parser.add_argument("--use_rerank", action="store_true", help="Enable re-ranking and adaptive retrieval")
+
     args = parser.parse_args()
 
-    run_benchmark(args.output, use_cache=args.use_cache, use_dynamic_k=args.use_dynamic_k)
+    run_benchmark(args.output, use_cache=args.use_cache, use_dynamic_k=args.use_dynamic_k, use_rerank=args.use_rerank)
