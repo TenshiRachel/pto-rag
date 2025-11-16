@@ -30,3 +30,19 @@ Make sure the base folder contains a .env file with the following variables:
 ```
 OPENAI_API_KEY=your-key-here
 ```
+
+## Running the agent
+
+### Arguments
+
+Arguments in [] are optional
+
+- output - Specify the json file to send evaluation results to
+- [use_cache] - Use ratio caching (Reuse previously retrieved documents for answers)
+- [use_dynamic_k] - Update k (Num of retrieved documents) for retriever during generation
+- [use_rerank] - Reorder retrieved documents
+
+### Command
+```
+python main.py --output output.json [--use_cache] [--use_dynamic_k] [--use_rerank]
+```
