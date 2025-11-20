@@ -17,10 +17,19 @@ from utilities.json import extract_json_and_prose, strip_json_fences
 from utilities.timing import TimingCallback
 from utilities.retrieval import RetrievalConfig
 import pandas as pd
+from retrieval_summarizer import RetrievalSummarizer
+from summarization_metrics import compute_summarization_metrics
 
 
+def create_system_message(question, summaries=None):
+    summary_block = ""
+    if summaries:
+        formatted = "\n".join(
+            f"[Summary from {s['report']} p{s['page']}] {s['summary']}"
+            for s in summaries
+        )
+        summary_block = f"\nRetrieved Summaries:\n{formatted}\n"
 
-def create_system_message(question):
     return f"""
         You are a financial analyst agent that must reason step-by-step BEFORE using any tools.
 
@@ -70,6 +79,8 @@ def create_system_message(question):
         - `data_values` contain the raw financial figures, corresponding fiscal years, and units retrieved directly from reports before any calculations.
         - `computed_values` include the calculated results (e.g., YoY or QoQ changes) together with the corresponding values from data_values.
         - Always include every period in `computed_values`, even if the change value is null.
+
+        {summary_block}
 
         Now answer:
         {question}
@@ -419,11 +430,69 @@ if __name__ == "__main__":
 
         start = time.perf_counter()
         prof.start()
+        
+        prompt_initial = create_system_message(question)
+        response_initial = agent_executor.invoke(
+            {"input": prompt_initial},
+            config={"callbacks": [timing_callback]}
+        )
+        
+        last_documents = getattr(retriever_tool_instance, "last_documents", [])
+        
+        # Build a JSON-serialisable view of retrieved chunks
+        retrieved_chunks = [
+            {
+                "report": doc.metadata.get("report")
+                or doc.metadata.get("source"),
+                "page": doc.metadata.get("page"),
+                "content": doc.page_content,
+            }
+            for doc in last_documents
+        ]
 
-        # System prompt includes the question
-        prompt = create_system_message(question)
+        # -------------------------------------------------------------
+        # SUMMARIZE RETRIEVED CHUNKS BEFORE CREATING PROMPT
+        # -------------------------------------------------------------
+        summarizer = RetrievalSummarizer()
+        summary_output = summarizer.summarize_chunks(retrieved_chunks)
 
+        summaries = summary_output["summaries"]
+        # Compute summarization metrics for each chunk
+        summarization_metrics = [
+            compute_summarization_metrics(chunk["content"], s["summary"])
+            for chunk, s in zip(retrieved_chunks, summaries)
+        ]
+        
+        # ========== AVERAGE SUMMARIZATION METRICS ==========
+        def avg(values):
+            return sum(values) / len(values) if values else 0
+
+        avg_orig_tokens = avg([m["orig_tokens"] for m in summarization_metrics])
+        avg_summary_tokens = avg([m["summary_tokens"] for m in summarization_metrics])
+        avg_compression = avg([m["compression_ratio"] for m in summarization_metrics])
+        avg_num_retention = avg([m["number_preservation_pct"] for m in summarization_metrics])
+        avg_kw_before = avg([m["keyword_density_before"] for m in summarization_metrics])
+        avg_kw_after = avg([m["keyword_density_after"] for m in summarization_metrics])
+
+        summarization_avg = {
+            "avg_orig_tokens": avg_orig_tokens,
+            "avg_summary_tokens": avg_summary_tokens,
+            "avg_compression_ratio": avg_compression,
+            "avg_numeric_retention": avg_num_retention,
+            "avg_keyword_density_before": avg_kw_before,
+            "avg_keyword_density_after": avg_kw_after,
+        }
+
+        # -------------------------------------------------------------
+        # BUILD SYSTEM MESSAGE WITH SUMMARIES INCLUDED
+        # -------------------------------------------------------------
+        prompt = create_system_message(question, summaries=summaries)
+
+        # -------------------------------------------------------------
+        # RUN AGENT WITH SUMMARIZED CONTEXT
+        # -------------------------------------------------------------
         response = agent_executor.invoke({"input": prompt}, config={"callbacks": [timing_callback]})
+
         timing_callback.finalize()
 
         prof.stop()
@@ -474,17 +543,6 @@ if __name__ == "__main__":
             retriever_tool_instance, "last_documents", []
         )
 
-        # Build a JSON-serialisable view of retrieved chunks
-        retrieved_chunks = [
-            {
-                "report": doc.metadata.get("report")
-                or doc.metadata.get("source"),
-                "page": doc.metadata.get("page"),
-                "content": doc.page_content,
-            }
-            for doc in last_documents
-        ]
-
         # Compute graded / binary precision & recall
         retrieval_metrics = compute_retrieval_metrics(
             ground_truth_entry, retrieved_pairs
@@ -533,6 +591,9 @@ if __name__ == "__main__":
 
         result["ground_truth"] = ground_truth_entry
         result["evaluation"] = eval_result
+        result["summaries"] = summaries
+        result["summarization_metrics"] = summarization_metrics
+        result["summarization_avg"] = summarization_avg
 
         # Print summary
         print(f"\n--- Profile for Question {i} ---")
