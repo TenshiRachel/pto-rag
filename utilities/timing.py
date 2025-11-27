@@ -170,7 +170,7 @@ class TimingCallback(BaseCallbackHandler):
     def finalize(self):
         # Calculate generation time as: time from last tool end to session end
         if self.last_tool_end_time:
-            self.generate_total = time.perf_counter() - self.last_tool_end_time
+            self.generation_total = time.perf_counter() - self.last_tool_end_time
         self.session_end = time.perf_counter()
 
     # -----------------------
@@ -178,12 +178,13 @@ class TimingCallback(BaseCallbackHandler):
     # -----------------------
     def get_summary(self):
         # compute total session time
-        if self.session_end is None and self.session_start is not None:
-            total_elapsed = time.perf_counter() - self.session_start
-        elif self.session_end is not None and self.session_start is not None:
-            total_elapsed = self.session_end - self.session_start
-        else:
-            total_elapsed = None
+        # if self.session_end is None and self.session_start is not None:
+        #     total_elapsed = time.perf_counter() - self.session_start
+        # elif self.session_end is not None and self.session_start is not None:
+        #     total_elapsed = self.session_end - self.session_start
+        # else:
+        #     total_elapsed = None
+        total_elapsed = self.total_tool_time + self.generation_total + self.reasoning_total
 
         # aggregate tool times
         t_tool_total = sum(t["time"] for t in self.tool_timings)
