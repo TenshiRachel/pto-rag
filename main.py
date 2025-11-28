@@ -120,7 +120,6 @@ def build_eval_prompt(agent_output, question, ground_truth=""):
 def create_agent(faiss_store, retriever_config):
     # Create Tools
     print("=== RETRIEVAL CONFIG ===")
-    print("output:", retriever_config.output)
     print("use_cache:", retriever_config.use_cache)
     print("use_dynamic_k:", retriever_config.use_dynamic_k)
     print("use_rerank:", retriever_config.use_rerank)
@@ -342,11 +341,6 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--output",
-        required=True,
-        help="Path to write JSON results (e.g. agent_results_baseline.json)",
-    )
     parser.add_argument("--use_cache", action="store_true", help="Enable retrieval caching")
     parser.add_argument("--use_dynamic_k", action="store_true", help="Enable dynamic-K retrieval")
     parser.add_argument("--use_rerank", action="store_true", help="Enable re-ranking and adaptive retrieval")
@@ -354,7 +348,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     retrievalConfig = RetrievalConfig(
-        output=args.output,
         use_cache=args.use_cache,
         use_dynamic_k=args.use_dynamic_k,
         use_rerank=args.use_rerank
@@ -364,8 +357,17 @@ if __name__ == "__main__":
 
     openai_api_key = os.getenv("OPENAI_API_KEY")
 
+    # Track preprocessing timing
+    preprocessing_times = {}
+
     # Async ingestion & chunking evaluation
+    print("\n[TIMING] Starting ingestion...")
+    t_ingest_start = time.perf_counter()
     all_docs = asyncio.run(process_all_async("data/"))
+    t_ingest_end = time.perf_counter()
+    preprocessing_times['T_parsing'] = t_ingest_end - t_ingest_start
+    print(f"[TIMING] Ingestion completed in {preprocessing_times['T_parsing']:.4f}s")
+    
     chunking_evaluator = ChunkingEvaluator(all_docs)
 
     results = chunking_evaluator.evaluate_chunking_strategy(
@@ -385,13 +387,38 @@ if __name__ == "__main__":
         chunk_overlap=optimal_chunk_config['chunk_overlap']
     )
 
+    print("\n[TIMING] Starting chunking...")
+    t_chunk_start = time.perf_counter()
     chunked_docs = chunker.chunk_documents(all_docs)
+    t_chunk_end = time.perf_counter()
+    preprocessing_times['T_chunking'] = t_chunk_end - t_chunk_start
+    print(f"[TIMING] Chunking completed in {preprocessing_times['T_chunking']:.4f}s")
 
     print(f"Chunked into {len(chunked_docs)} total segments.")
     print(f"Parsed and chunked {len(all_docs)} total text segments.")
 
     EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-3-small")  # Can be 'text-embedding-3-large'
+    
+    print("\n[TIMING] Starting embedding...")
+    t_embed_start = time.perf_counter()
     faiss_store = build_faiss_index(chunked_docs, EMBEDDING_MODEL)
+    t_embed_end = time.perf_counter()
+    preprocessing_times['T_embedding'] = t_embed_end - t_embed_start
+    print(f"[TIMING] Embedding completed in {preprocessing_times['T_embedding']:.4f}s")
+    
+    # Calculate total preprocessing time
+    preprocessing_times['T_preprocessing_total'] = sum([
+        preprocessing_times['T_parsing'],
+        preprocessing_times['T_chunking'],
+        preprocessing_times['T_embedding']
+    ])
+    print(f"\n[TIMING] Total preprocessing time: {preprocessing_times['T_preprocessing_total']:.4f}s")
+    # Save preprocessing times to separate file
+    with open("preprocessing_times2.json", "w") as f:
+        json.dump(preprocessing_times, f, indent=2)
+    print(f"\nPreprocessing times saved to preprocessing_times.json")
+
+    exit()
 
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:
