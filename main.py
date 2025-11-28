@@ -414,11 +414,11 @@ if __name__ == "__main__":
     ])
     print(f"\n[TIMING] Total preprocessing time: {preprocessing_times['T_preprocessing_total']:.4f}s")
     # Save preprocessing times to separate file
-    with open("preprocessing_times2.json", "w") as f:
+    with open("preprocessing_times.json", "w") as f:
         json.dump(preprocessing_times, f, indent=2)
     print(f"\nPreprocessing times saved to preprocessing_times.json")
 
-    exit()
+    # exit()
 
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:
