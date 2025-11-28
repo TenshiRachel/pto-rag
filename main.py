@@ -418,7 +418,6 @@ if __name__ == "__main__":
         json.dump(preprocessing_times, f, indent=2)
     print(f"\nPreprocessing times saved to preprocessing_times.json")
 
-    # exit()
 
     # Load the questions from JSON file
     with open('qa/nvda_ground_truth3.json', 'r') as f:

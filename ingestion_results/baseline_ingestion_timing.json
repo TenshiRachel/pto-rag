@@ -1,0 +1,102 @@
+[
+  {
+    "run_number": 1,
+    "T_ingestion": 568.6176294999896,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.6908223999780603,
+    "num_chunks": 6354,
+    "T_faiss_building": 40.294573199993465,
+    "T_total": 609.6030250999611
+  },
+  {
+    "run_number": 2,
+    "T_ingestion": 617.0319073999999,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.29266700000152923,
+    "num_chunks": 6354,
+    "T_faiss_building": 37.829380900016986,
+    "T_total": 655.1539553000184
+  },
+  {
+    "run_number": 3,
+    "T_ingestion": 766.9567005000135,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.28845959997852333,
+    "num_chunks": 6354,
+    "T_faiss_building": 39.56434380001156,
+    "T_total": 806.8095039000036
+  },
+  {
+    "run_number": 4,
+    "T_ingestion": 819.6638425999845,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.2958388999977615,
+    "num_chunks": 6354,
+    "T_faiss_building": 48.849706299981335,
+    "T_total": 868.8093877999636
+  },
+  {
+    "run_number": 5,
+    "T_ingestion": 1191.144428300002,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.29594680000445805,
+    "num_chunks": 6354,
+    "T_faiss_building": 55.8125357000099,
+    "T_total": 1247.2529108000163
+  },
+  {
+    "run_number": 6,
+    "T_ingestion": 1165.4266896999907,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.28834769999957643,
+    "num_chunks": 6354,
+    "T_faiss_building": 54.73661609998089,
+    "T_total": 1220.4516534999711
+  },
+  {
+    "run_number": 7,
+    "T_ingestion": 1137.6328883000242,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.2840223000093829,
+    "num_chunks": 6354,
+    "T_faiss_building": 53.70270460000029,
+    "T_total": 1191.6196152000339
+  },
+  {
+    "run_number": 8,
+    "T_ingestion": 625.8353982999979,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.5880602999823168,
+    "num_chunks": 6354,
+    "T_faiss_building": 56.55842940000002,
+    "T_total": 682.9818879999802
+  },
+  {
+    "run_number": 9,
+    "T_ingestion": 614.8919722999854,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.28699319998850115,
+    "num_chunks": 6354,
+    "T_faiss_building": 52.23114699998405,
+    "T_total": 667.4101124999579
+  },
+  {
+    "run_number": 10,
+    "T_ingestion": 1107.6228564000048,
+    "num_documents": 2039,
+    "num_pdfs": 21,
+    "T_chunking": 0.2881686000037007,
+    "num_chunks": 6354,
+    "T_faiss_building": 54.738277800002834,
+    "T_total": 1162.6493028000114
+  }
+]
