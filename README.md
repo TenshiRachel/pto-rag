@@ -44,5 +44,5 @@ Arguments in [] are optional
 
 ### Command
 ```
-python main.py --output output.json [--use_cache] [--use_dynamic_k] [--use_rerank]
+python main.py [--use_cache] [--use_dynamic_k] [--use_rerank]
 ```
