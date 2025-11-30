@@ -45,7 +45,7 @@ Arguments in [] are optional.
 
 Run with all 3 enabled for best results.
 
-- [use_cache] - Use ratio caching (Reuse previously retrieved documents for answers)
+- [use_cache] - Use query caching (Reuse previously retrieved documents for answers)
 - [use_dynamic_k] - Update k (Num of retrieved documents) for retriever during generation
 - [use_rerank] - Reorder retrieved documents
 
@@ -54,7 +54,7 @@ Run with all 3 enabled for best results.
 python main.py [--use_cache] [--use_dynamic_k] [--use_rerank]
 ```
 
-**Do take note that agent results produced from after optimization uses LLM as a judge while accuracy analysis is more accurate**
+**Do take note that agent results produced from after optimization uses LLM as a judge while accuracy_result_analysis.ipynb does not, and accuracy derived from the notebook is more accurate**
 
 ### Analysis
 
