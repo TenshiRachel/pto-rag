@@ -33,16 +33,29 @@ OPENAI_API_KEY=your-key-here
 
 ## Running the agent
 
-### Arguments
+### Before optimizations
 
-Arguments in [] are optional
+Please run the Baseline Implementation notebook.
 
-- output - Specify the json file to send evaluation results to
+### After optimizations
+
+#### Arguments
+
+Arguments in [] are optional.
+
+Run with all 3 enabled for best results.
+
 - [use_cache] - Use ratio caching (Reuse previously retrieved documents for answers)
 - [use_dynamic_k] - Update k (Num of retrieved documents) for retriever during generation
 - [use_rerank] - Reorder retrieved documents
 
-### Command
+#### Run Command
 ```
 python main.py [--use_cache] [--use_dynamic_k] [--use_rerank]
 ```
+
+**Do take note that agent results produced from after optimization uses LLM as a judge while accuracy analysis is more accurate**
+
+### Analysis
+
+Please run ingestion_benchmark.ipynb and accuracy_result_analysis.ipynb
